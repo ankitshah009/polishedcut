@@ -205,8 +205,11 @@ describe("frame analyst config", () => {
   it("insists on https for the webhook URL and PUBLIC_URL, and on them being URLs at all", async () => {
     let c = await fresh({ ...complete, NEBULA_FRAME_WEBHOOK_URL: "http://api.nebula.gg/webhooks/triggers/abc/webhook" });
     expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/NEBULA_FRAME_WEBHOOK_URL must be https \(got http\)/)]);
-    c = await fresh({ ...complete, PUBLIC_URL: "http://localhost:3000" });
+    c = await fresh({ ...complete, PUBLIC_URL: "http://10.0.0.5:3000" });
     expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/PUBLIC_URL must be https.*\(got http\)/)]);
+    // The local stand-in (scripts/frame-analyst-stub.ts) runs over plain http on loopback; that stays allowed.
+    c = await fresh({ ...complete, NEBULA_FRAME_WEBHOOK_URL: "http://127.0.0.1:3799/analyze", PUBLIC_URL: "http://localhost:3100" });
+    expect(c.frameAnalystConfigProblems()).toEqual([]);
     c = await fresh({ ...complete, NEBULA_FRAME_WEBHOOK_URL: "not a url", PUBLIC_URL: "also not" });
     expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/NEBULA_FRAME_WEBHOOK_URL is not a valid URL/), expect.stringMatching(/PUBLIC_URL is not a valid URL/)]);
   });

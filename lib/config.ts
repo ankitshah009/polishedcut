@@ -100,6 +100,12 @@ export const FRAME_ANALYST_BACKOFF_MS = envInt("NEBULA_FRAME_BACKOFF_MS", 1000, 
  * can decide how loud to be; `validateFrameAnalystConfig` throws a FrameAnalystError(kind "config") on any.
  * Nothing to check when FRAME_ANALYSIS is local (the webhook is never called then).
  */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+/** Plain http is fine for a loopback host: that is the local stand-in (`scripts/frame-analyst-stub.ts`). */
+function plainHttpAllowed(u: URL): boolean {
+  return u.protocol === "https:" || (u.protocol === "http:" && LOOPBACK_HOSTS.has(u.hostname));
+}
+
 export function frameAnalystConfigProblems(): string[] {
   if (FRAME_ANALYSIS !== "nebula") return [];
   const problems: string[] = [];
@@ -111,7 +117,7 @@ export function frameAnalystConfigProblems(): string[] {
     } catch {
       problems.push(`NEBULA_FRAME_WEBHOOK_URL is not a valid URL: ${JSON.stringify(FRAME_ANALYST_URL)}`);
     }
-    if (parsed && parsed.protocol !== "https:") problems.push(`NEBULA_FRAME_WEBHOOK_URL must be https (got ${parsed.protocol.replace(/:$/, "")}): the shared secret travels in a header`);
+    if (parsed && !plainHttpAllowed(parsed)) problems.push(`NEBULA_FRAME_WEBHOOK_URL must be https (got ${parsed.protocol.replace(/:$/, "")}): the shared secret travels in a header`);
   }
   if (!FRAME_ANALYST_SECRET) problems.push("NEBULA_FRAME_WEBHOOK_SECRET is not set (Nebula authenticates the trigger with X-Webhook-Secret)");
   if (!PUBLIC_URL) problems.push("PUBLIC_URL is not set (the webhook fetches the clip, the stills and posts its callback there)");
@@ -122,7 +128,7 @@ export function frameAnalystConfigProblems(): string[] {
     } catch {
       problems.push(`PUBLIC_URL is not a valid URL: ${JSON.stringify(PUBLIC_URL)}`);
     }
-    if (parsed && parsed.protocol !== "https:") problems.push(`PUBLIC_URL must be https for Nebula to reach it (got ${parsed.protocol.replace(/:$/, "")})`);
+    if (parsed && !plainHttpAllowed(parsed)) problems.push(`PUBLIC_URL must be https for Nebula to reach it (got ${parsed.protocol.replace(/:$/, "")})`);
   }
   return problems;
 }
