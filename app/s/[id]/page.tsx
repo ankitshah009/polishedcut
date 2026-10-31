@@ -11,10 +11,10 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const run = await loadRun(id).catch(() => null);
-  if (!run) return { title: "Cut not found · PolishedTake" };
+  if (!run) return { title: "Cut not found · PolishedCut" };
   const title = run.iterations.at(-1)?.edl.title.trim() || run.brief.split(/[.!?\n]/)[0]?.trim() || "A cut";
   return {
-    title: `${title} · PolishedTake`,
+    title: `${title} · PolishedCut`,
     description: run.brief,
     openGraph: { title, description: run.brief, type: "video.other" },
   };

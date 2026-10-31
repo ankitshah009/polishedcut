@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { Dashboard } from "@/components/shell/Dashboard";
 
 export const metadata: Metadata = {
-  title: "PolishedTake",
+  title: "PolishedCut",
   description: "Drop footage, write a one-line brief, and let Argon cut, watch and fix your video.",
 };
 

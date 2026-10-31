@@ -72,7 +72,7 @@ function TheaterBody({ run }: { run: Run }) {
         {it && (
           <a
             href={videoUrl(run.id, it.video)}
-            download={`polishedtake-${run.id}-v${it.n}.mp4`}
+            download={`polishedcut-${run.id}-v${it.n}.mp4`}
             className="inline-flex h-9 items-center gap-2 rounded-lg border bg-panel-2 px-4 text-sm font-medium hover:bg-accent"
           >
             <Download className="size-4" /> Download v{it.n}

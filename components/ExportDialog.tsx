@@ -106,7 +106,7 @@ export function ExportDialog({ run, it, disabled }: { run: Run; it: Iteration | 
           {it && (
             <a
               href={videoUrl(run.id, it.video)}
-              download={`polishedtake-${run.id}-v${it.n}-${selected.id}.mp4`}
+              download={`polishedcut-${run.id}-v${it.n}-${selected.id}.mp4`}
               onClick={() => setDone(true)}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-tile hover:brightness-105"
             >

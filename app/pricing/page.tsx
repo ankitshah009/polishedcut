@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import { Pricing } from "@/components/pricing/Pricing";
 
 export const metadata: Metadata = {
-  title: "Pricing · PolishedTake",
-  description: "Plans for PolishedTake, and an honest look at what every self-correcting cut costs in model time.",
+  title: "Pricing · PolishedCut",
+  description: "Plans for PolishedCut, and an honest look at what every self-correcting cut costs in model time.",
 };
 
 export default function PricingPage() {

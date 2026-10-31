@@ -1,4 +1,4 @@
-# Working on PolishedTake
+# Working on PolishedCut
 
 Read this before touching the repo. Each note below cost someone time today.
 

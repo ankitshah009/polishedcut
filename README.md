@@ -1,4 +1,4 @@
-# PolishedTake
+# PolishedCut
 
 Every cut gets a polished take: the editor watches its own render and fixes it before you see it.
 

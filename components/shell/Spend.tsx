@@ -79,7 +79,7 @@ export function Spend({ summary }: { summary: SpendSummary | null }) {
         target="_blank"
         rel="noreferrer"
         className="inline-flex items-center gap-1 text-xs font-medium text-accent-foreground hover:underline"
-        title={summary?.note || "PolishedTake does not see your Google balance; AI Studio does."}
+        title={summary?.note || "PolishedCut does not see your Google balance; AI Studio does."}
       >
         Check balance in AI Studio <ArrowUpRight className="size-3" />
       </a>

@@ -1,4 +1,4 @@
-// Which Google models PolishedTake uses, read from the same constants the pipeline calls, plus evidence
+// Which Google models PolishedCut uses, read from the same constants the pipeline calls, plus evidence
 // from the runs on disk that each one has actually done its job. Server-only.
 import { existsSync } from "node:fs";
 import path from "node:path";

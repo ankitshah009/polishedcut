@@ -1,8 +1,8 @@
 {
-  "name": "polishedtake",
+  "name": "polishedcut",
   "version": "0.2.0",
   "private": true,
-  "description": "PolishedTake: a self-correcting video editor. Gemini 4 Argon drafts, renders, watches, critiques and patches the cut.",
+  "description": "PolishedCut: a self-correcting video editor. Gemini 4 Argon drafts, renders, watches, critiques and patches the cut.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

@@ -9,7 +9,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const run = await loadRun(id).catch(() => null);
   const brief = run?.brief.trim();
-  return { title: brief ? `${brief.length > 60 ? `${brief.slice(0, 57)}…` : brief} · PolishedTake` : "Cut · PolishedTake" };
+  return { title: brief ? `${brief.length > 60 ? `${brief.slice(0, 57)}…` : brief} · PolishedCut` : "Cut · PolishedCut" };
 }
 
 export default async function RunPage({ params }: Props) {

@@ -15,7 +15,7 @@ const QA: { q: string; a: string }[] = [
   },
   {
     q: "Can I bring my own Gemini key?",
-    a: "Yes, on Pay as you go. PolishedTake then meters tokens for you and never marks them up; you pay Google for the models and us for the editor.",
+    a: "Yes, on Pay as you go. PolishedCut then meters tokens for you and never marks them up; you pay Google for the models and us for the editor.",
   },
   {
     q: "What happens when I run out of cuts?",

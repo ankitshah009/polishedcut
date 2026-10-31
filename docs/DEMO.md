@@ -1,4 +1,4 @@
-# PolishedTake: 3-minute live demo
+# PolishedCut: 3-minute live demo
 
 One presenter, one laptop, real phone footage from today. The live run starts at 0:20 and will not be
 finished by 3:00, so the middle of the demo walks through a run that finished earlier. That is
@@ -30,7 +30,7 @@ Times are cumulative. Lines in quotes are what to say; everything else is what t
 Home page is up; the latest finished cut is already looping in the monitor on the right.
 
 "I shot today on my phone. I have footage and one sentence about the cut I want, and no editor.
-PolishedTake takes both, drafts the edit, renders it, then watches its own render and fixes what it
+PolishedCut takes both, drafts the edit, renders it, then watches its own render and fixes what it
 finds before I ever press play. Let me start one for real and then show you one that finished."
 
 ### 0:20 to 0:50. Start the live run

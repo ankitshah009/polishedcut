@@ -1,4 +1,4 @@
-# PolishedTake: pitch and judge Q&A
+# PolishedCut: pitch and judge Q&A
 
 ## 90-second verbal pitch
 
@@ -6,7 +6,7 @@ I shot today on my phone. I have footage and one sentence describing the cut I w
 That is the person this is for: me, this afternoon, and every creator whose footage exists but whose
 edit does not.
 
-PolishedTake takes the clips and the sentence. gemini-3.5-transcribe gives every clip a word-timed
+PolishedCut takes the clips and the sentence. gemini-3.5-transcribe gives every clip a word-timed
 transcript. Then gemini-4-argon sees every clip as video, plus every transcript, plus the brief, in
 one context, and writes an edit decision list: which seconds of which clip, in what order, with
 captions placed on the output timeline. ffmpeg renders it.
