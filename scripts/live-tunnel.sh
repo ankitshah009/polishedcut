@@ -10,6 +10,7 @@
 #   scripts/live-tunnel.sh            # build if needed, start server + tunnel, deploy the proxy
 #   scripts/live-tunnel.sh status     # what is running and the current public URL
 #   scripts/live-tunnel.sh stop
+#   scripts/live-tunnel.sh install   # launchd agent: the same "up" at every login (reboot-safe); uninstall removes it
 #
 # Logs: /tmp/pc-server.log, /tmp/tunnel.log, /tmp/pc-proxy.log. The tunnel hostname changes on every
 # reconnect; a watcher inside the tunnel loop redeploys the proxy automatically when that happens.
@@ -35,9 +36,39 @@ stop() {
   echo stopped
 }
 
+
+# launchd: start the server + tunnel + proxy at every login, so a reboot does not take the site down.
+# (LaunchAgents run after the user logs in; with FileVault the Mac must get past the login screen first.)
+PLIST="$HOME/Library/LaunchAgents/ai.polishedcut.live.plist"
+install() {
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$PLIST" <<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>ai.polishedcut.live</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$ROOT/scripts/live-tunnel.sh</string><string>up</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>$PATH</string>
+    <key>HOME</key><string>$HOME</string>
+    <key>PORT</key><string>$PORT</string>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/pc-launchd.log</string>
+  <key>StandardErrorPath</key><string>/tmp/pc-launchd.log</string>
+</dict></plist>
+XML
+  launchctl bootout "gui/$(id -u)/ai.polishedcut.live" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  echo "installed $PLIST (runs 'live-tunnel.sh up' at login; log /tmp/pc-launchd.log)"
+}
+uninstall() { launchctl bootout "gui/$(id -u)/ai.polishedcut.live" 2>/dev/null || true; rm -f "$PLIST"; echo "removed $PLIST"; }
+
 case "${1:-up}" in
   status) status; exit 0 ;;
   stop) stop; exit 0 ;;
+  install) install; exit 0 ;;
+  uninstall) uninstall; exit 0 ;;
 esac
 
 cd "$ROOT"
@@ -92,9 +123,13 @@ while true; do
 done
 SH
 chmod +x /tmp/pc-tunnel.sh
-pkill -f /tmp/pc-tunnel.sh 2>/dev/null || true; pkill -f 'ssh .* -R 80:localhost' 2>/dev/null || true
-: > /tmp/tunnel.log
-nohup /tmp/pc-tunnel.sh > /tmp/tunnel.log 2>&1 &
+if pgrep -f /tmp/pc-tunnel.sh >/dev/null && pgrep -f 'ssh .* -R 80:localhost' >/dev/null; then
+  echo "tunnel loop already running; keeping it (stop first to force a new hostname)"
+else
+  pkill -f /tmp/pc-tunnel.sh 2>/dev/null || true; pkill -f 'ssh .* -R 80:localhost' 2>/dev/null || true
+  : > /tmp/tunnel.log
+  nohup /tmp/pc-tunnel.sh > /tmp/tunnel.log 2>&1 &
+fi
 for _ in $(seq 1 20); do
   URL=$(grep -o 'https://[a-z0-9]*\.lhr\.life' /tmp/tunnel.log | tail -1 || true)
   [ -n "$URL" ] && break; sleep 1
@@ -102,5 +137,9 @@ done
 [ -n "${URL:-}" ] || { echo "no tunnel URL after 20s; see /tmp/tunnel.log"; exit 1; }
 echo "tunnel: $URL"
 
-deploy_proxy "$URL"
+if [ "$(grep -o 'https://[^/"]*' $PROXY_DIR/vercel.json 2>/dev/null | head -1)" = "$URL" ]; then
+  echo "proxy already points at $URL"
+else
+  deploy_proxy "$URL"
+fi
 status
