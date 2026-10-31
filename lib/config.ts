@@ -44,10 +44,43 @@ export const DEFAULT_DEMO_BRIEF =
 // ---------------------------------------------------------------------------
 // Models
 
+// ---------------------------------------------------------------------------
+// Model provider
+//
+// Every model call goes through the Gemini SDK (@google/genai). MODEL_PROVIDER picks who answers:
+//   gemini  (default)  Google directly with GEMINI_API_KEY.
+//   nebula             a Nebula-hosted, Gemini-protocol gateway: NEBULA_BASE_URL + NEBULA_API_KEY, model ids
+//                      such as google:gemini-3.8-flash / google:gemini-4-argon. NEBULA_MODEL is the main cut
+//                      model (draft, critique, patch); NEBULA_FALLBACK_MODEL is tried when it errors.
+// Unset, the provider is nebula when both NEBULA_BASE_URL and NEBULA_API_KEY are present, else gemini.
+// GENAI_BASE_URL points the SDK at any other Gemini-compatible endpoint without changing provider.
+export type ModelProvider = "local" | "gemini" | "nebula";
+export const NEBULA_BASE_URL = (process.env.NEBULA_BASE_URL ?? "").trim().replace(/\/+$/, "");
+export const NEBULA_API_KEY = (process.env.NEBULA_API_KEY ?? "").trim();
+//   local              no hosted model at all: whisper.cpp transcripts + ffmpeg analysis + deterministic cut
+//                      rules (lib/local-editor.ts). Free. The default when no key of any kind is configured.
+const GEMINI_KEY_PRESENT = !!(process.env.GEMINI_API_KEY?.trim() || process.env.GEMINI_API_KEY_1?.trim());
+export const MODEL_PROVIDER: ModelProvider = (() => {
+  const v = process.env.MODEL_PROVIDER?.trim().toLowerCase();
+  if (v === "nebula" || v === "gemini" || v === "local") return v;
+  if (NEBULA_BASE_URL && NEBULA_API_KEY) return "nebula";
+  return GEMINI_KEY_PRESENT ? "gemini" : "local";
+})();
+/** whisper.cpp model for the local editor's transcripts; `whisper-cli` (brew install whisper-cpp) must be on PATH. */
+export const WHISPER_MODEL = path.resolve(/*turbopackIgnore: true*/ process.env.WHISPER_MODEL ?? "models/ggml-base.en.bin");
+export const WHISPER_BIN = process.env.WHISPER_BIN?.trim() || "whisper-cli";
+/** Base URL for the SDK: the Nebula gateway under the nebula provider, else GENAI_BASE_URL, else Google's default. */
+export const GENAI_BASE_URL = MODEL_PROVIDER === "nebula" ? NEBULA_BASE_URL : (process.env.GENAI_BASE_URL ?? "").trim().replace(/\/+$/, "");
+const viaNebula = MODEL_PROVIDER === "nebula";
+const NEBULA_MODEL = process.env.NEBULA_MODEL?.trim() || "google:gemini-3.8-flash";
+export const NEBULA_FALLBACK_MODEL = process.env.NEBULA_FALLBACK_MODEL?.trim() || "google:gemini-4-argon";
+
 export const MODELS = {
-  argon: process.env.ARGON_MODEL ?? "gemini-4-argon",
-  flash: process.env.FLASH_MODEL ?? "gemini-3.8-flash",
-  transcribe: process.env.TRANSCRIBE_MODEL ?? "gemini-3.5-transcribe",
+  argon: process.env.ARGON_MODEL ?? (viaNebula ? NEBULA_MODEL : "gemini-4-argon"),
+  flash: process.env.FLASH_MODEL ?? (viaNebula ? "google:gemini-3.8-flash" : "gemini-3.8-flash"),
+  transcribe: process.env.TRANSCRIBE_MODEL ?? (viaNebula ? "google:gemini-3.8-flash" : "gemini-3.5-transcribe"),
+  /** Tried for the main cut model when `argon` errors; empty disables the fallback. */
+  argonFallback: process.env.ARGON_FALLBACK_MODEL ?? (viaNebula ? NEBULA_FALLBACK_MODEL : ""),
 } as const;
 
 /** Wall-clock budget for one model call, one Files API upload to become ACTIVE, and the SDK's HTTP timeout. */

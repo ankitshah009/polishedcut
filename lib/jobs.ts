@@ -2,7 +2,8 @@ import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { runDir } from "./config";
-import { cleanupRunUploads, createGeminiEditor, type EditorModel } from "./gemini";
+import { LOCAL_ONLY, createEditor } from "./editor";
+import { cleanupRunUploads, type EditorModel } from "./gemini";
 import { runEdit } from "./loop";
 import { holdSweeps, isInProgress, isRunning, listRuns, markActive, markInactive, saveRun } from "./store";
 import type { Run } from "./schema";
@@ -48,7 +49,7 @@ function launch(run: Run, makeEditor: () => EditorModel): void {
       // Companion models (Flash-Lite, Nano Banana, Lyria, Omni) report their calls into run.usage too.
       await withUsageSink(
         (u) => (run.usage ??= []).push(u),
-        () => runEdit(run, makeEditor(), { onUpdate: (r) => void save(r) }),
+        () => runEdit(run, makeEditor(), { onUpdate: (r) => void save(r), ...(LOCAL_ONLY ? { analyzeBrief: async () => null, plainCards: true } : {}) }),
       );
     } catch (err) {
       run.status = "error";
@@ -69,10 +70,10 @@ function launch(run: Run, makeEditor: () => EditorModel): void {
  * A missing API key or any other failure is recorded on the run, not thrown to the caller.
  * `editor` defaults to the Gemini editor; tests pass a double.
  */
-/** The real editor for `run`, recording every Gemini call's token usage on the run for cost estimates. */
+/** The real editor for `run` (lib/editor.ts), recording every hosted model call's token usage on the run. */
 function geminiFor(run: Run): EditorModel {
   run.usage ??= [];
-  return createGeminiEditor({ runId: run.id, onUsage: (u) => run.usage!.push(u) });
+  return createEditor({ runId: run.id, onUsage: (u) => run.usage!.push(u) });
 }
 
 export function startRun(run: Run, editor?: EditorModel): void {

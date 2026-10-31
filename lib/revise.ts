@@ -3,7 +3,8 @@ import path from "node:path";
 
 import { generateEndCard } from "./art";
 import { REVISE_MAX_ITERATIONS, runDir } from "./config";
-import { createGeminiEditor, type ClipInput, type EditorModel } from "./gemini";
+import { createEditor } from "./editor";
+import { type ClipInput, type EditorModel } from "./gemini";
 import { lintEdl } from "./lint";
 import { END_IMAGE, mergeCritique, sanitizePatches } from "./loop";
 import { makeProxy, probeDuration } from "./media";
@@ -245,7 +246,7 @@ export function startRevision(run: Run, note: string): void {
     try {
       // Same as lib/jobs.ts geminiFor(run): every Gemini call's token usage lands on the run for cost estimates.
       run.usage ??= [];
-      const editor = createGeminiEditor({ onUsage: (u) => run.usage!.push(u) });
+      const editor = createEditor({ onUsage: (u) => run.usage!.push(u) });
       await withUsageSink(
         (u) => (run.usage ??= []).push(u),
         () => reviseRun(run, note, editor, { onUpdate: (r) => void save(r) }),

@@ -6,7 +6,7 @@ import path from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 
-import { GEMINI_CONCURRENCY, KEEP_UPLOADS, LLM_TIMEOUT_MS, MODELS, RUNS_DIR, isRunId, runDir, type OutputSize } from "./config";
+import { GEMINI_CONCURRENCY, GENAI_BASE_URL, KEEP_UPLOADS, LLM_TIMEOUT_MS, MODELS, MODEL_PROVIDER, NEBULA_API_KEY, RUNS_DIR, isRunId, runDir, type OutputSize } from "./config";
 import { chooseOutput, probeMedia, type MediaInfo } from "./media";
 import { critiquePrompt, draftPrompt } from "./prompts";
 import {
@@ -619,6 +619,23 @@ async function call(
 }
 
 /** Ask for JSON that validates against `schema`. One retry feeds the validation error back. */
+/**
+ * Run `fn` with the main cut model; when it fails for a reason other than schema validation and
+ * MODELS.argonFallback is set, run it once more with the fallback model (Nebula: NEBULA_FALLBACK_MODEL).
+ */
+async function withArgonFallback<T>(fn: (model: string) => Promise<T>): Promise<T> {
+  try {
+    return await fn(MODELS.argon);
+  } catch (err) {
+    const fallback = MODELS.argonFallback;
+    if (!fallback || fallback === MODELS.argon) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/failed validation|empty output_text/i.test(msg)) throw err;
+    console.warn(`[model] ${MODELS.argon} failed (${msg.slice(0, 160)}); retrying with ${fallback}`);
+    return fn(fallback);
+  }
+}
+
 async function askJson<T>(
   ai: Client,
   model: string,
@@ -662,14 +679,29 @@ function tryExtract(text: string): unknown {
   }
 }
 
-/** Configured keys in preference order. GEMINI_KEY_ORDER=1 puts GEMINI_API_KEY_1 first. */
+/**
+ * Configured keys in preference order for the active provider (lib/config.ts MODEL_PROVIDER).
+ * nebula: NEBULA_API_KEY only. gemini: GEMINI_API_KEY then GEMINI_API_KEY_1; GEMINI_KEY_ORDER=1 swaps them.
+ */
 export function geminiKeys(): [string, string][] {
+  if (MODEL_PROVIDER === "nebula") return NEBULA_API_KEY ? [["NEBULA_API_KEY", NEBULA_API_KEY]] : [];
   const keys: [string, string][] = [];
   for (const name of ["GEMINI_API_KEY", "GEMINI_API_KEY_1"]) {
     const v = process.env[name];
     if (v && !keys.some(([, k]) => k === v)) keys.push([name, v]);
   }
   return process.env.GEMINI_KEY_ORDER === "1" ? keys.reverse() : keys;
+}
+
+/** The error every caller throws when no key is configured for the active provider. */
+export const NO_KEY_MESSAGE =
+  MODEL_PROVIDER === "nebula"
+    ? "NEBULA_API_KEY is not set (MODEL_PROVIDER=nebula). Add NEBULA_BASE_URL and NEBULA_API_KEY to .env at the repo root."
+    : "GEMINI_API_KEY is not set. Add it to .env at the repo root, or set NEBULA_BASE_URL + NEBULA_API_KEY to use Nebula.";
+
+/** One SDK client for the active provider: Google directly, or the Nebula / GENAI_BASE_URL gateway. */
+export function newGenAI(apiKey: string): GoogleGenAI {
+  return new GoogleGenAI({ apiKey, httpOptions: { timeout: LLM_TIMEOUT_MS, ...(GENAI_BASE_URL ? { baseUrl: GENAI_BASE_URL } : {}) } });
 }
 
 function isClient(x: unknown): x is Client {
@@ -679,7 +711,7 @@ function isClient(x: unknown): x is Client {
 /** A client from the configured key, or undefined when there is none. */
 function defaultClient(): Client | undefined {
   const apiKey = geminiKeys()[0]?.[1];
-  return apiKey ? new GoogleGenAI({ apiKey, httpOptions: { timeout: LLM_TIMEOUT_MS } }) : undefined;
+  return apiKey ? newGenAI(apiKey) : undefined;
 }
 
 /**
@@ -707,7 +739,7 @@ export async function outputForClips(clips: ClipInput[], brief: string): Promise
 export function createGeminiEditor(clientOrOptions?: Client | GeminiEditorOptions): EditorModel {
   const opts: GeminiEditorOptions = isClient(clientOrOptions) ? { client: clientOrOptions } : (clientOrOptions ?? {});
   const ai = opts.client ?? defaultClient();
-  if (!ai) throw new Error("GEMINI_API_KEY is not set. Add it to .env at the repo root.");
+  if (!ai) throw new Error(NO_KEY_MESSAGE);
   const model = ai;
   const upload = (file: string) => uploadVideo(model, file, onUsage, opts.runId ?? runIdOf(file));
   // A throwing callback must never break the cut; usage is bookkeeping.
@@ -752,7 +784,7 @@ export function createGeminiEditor(clientOrOptions?: Client | GeminiEditorOption
       });
       parts.push({ type: "text", text: draftPrompt(brief, clips) });
 
-      const draft = await askJson(model, MODELS.argon, parts, EdlDraftSchema, "medium", onUsage);
+      const draft = await withArgonFallback((m) => askJson(model, m, parts, EdlDraftSchema, "medium", onUsage));
       return EdlSchema.parse({
         ...draft,
         cuts: draft.cuts.map((cut, i) => ({ ...cut, id: `c${i + 1}` })),
@@ -766,7 +798,7 @@ export function createGeminiEditor(clientOrOptions?: Client | GeminiEditorOption
       const parts: Part[] = [{ type: "text", text: "RENDERED EDIT:" }];
       parts.push(videoPart(await upload(renderedFile)));
       parts.push({ type: "text", text: critiquePrompt(brief, edl, clips) });
-      return askJson(model, MODELS.argon, parts, CritiqueSchema, "medium", onUsage);
+      return withArgonFallback((m) => askJson(model, m, parts, CritiqueSchema, "medium", onUsage));
     },
   };
 }

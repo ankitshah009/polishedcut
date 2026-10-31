@@ -4,8 +4,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 
-import { LLM_TIMEOUT_MS } from "./config";
-import { extractJson, geminiKeys, responseSchema, withRetry } from "./gemini";
+
+import { extractJson, NO_KEY_MESSAGE, geminiKeys, newGenAI, responseSchema, withRetry } from "./gemini";
 import { reportUsage } from "./usage-context";
 
 export const BRIEF_MODEL = process.env.BRIEF_MODEL ?? "gemini-3.5-flash-lite";
@@ -36,8 +36,8 @@ export function briefPrompt(brief: string): string {
 
 function defaultClient(): Client {
   const apiKey = geminiKeys()[0]?.[1];
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set. Add it to .env at the repo root.");
-  return new GoogleGenAI({ apiKey, httpOptions: { timeout: LLM_TIMEOUT_MS } });
+  if (!apiKey) throw new Error(NO_KEY_MESSAGE);
+  return newGenAI(apiKey);
 }
 
 async function ask(ai: Client, params: Record<string, unknown>, label: string): Promise<string> {

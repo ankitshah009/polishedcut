@@ -15,8 +15,8 @@ import { promisify } from "node:util";
 import { GoogleGenAI } from "@google/genai";
 
 import { generateStill } from "./art";
-import { EXEC_MAX_BUFFER, LLM_TIMEOUT_MS, OUTPUT } from "./config";
-import { geminiKeys, withRetry } from "./gemini";
+import { EXEC_MAX_BUFFER, OUTPUT } from "./config";
+import { NO_KEY_MESSAGE, geminiKeys, newGenAI, withRetry } from "./gemini";
 import { reportUsage } from "./usage-context";
 
 const execFileAsync = promisify(execFile);
@@ -69,8 +69,8 @@ export interface GeneratedVideo {
 
 function defaultClient(): BrollClient {
   const apiKey = geminiKeys()[0]?.[1];
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set. Add it to .env at the repo root.");
-  return new GoogleGenAI({ apiKey, httpOptions: { timeout: LLM_TIMEOUT_MS } }) as unknown as BrollClient;
+  if (!apiKey) throw new Error(NO_KEY_MESSAGE);
+  return newGenAI(apiKey) as unknown as BrollClient;
 }
 
 function clampSeconds(seconds: number): number {

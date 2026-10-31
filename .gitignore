@@ -21,3 +21,6 @@ next-env.d.ts
 !/footage/demo/
 !/footage/demo/brief.txt
 !/footage/demo/0*.mp4
+
+# Local speech model for the free, on-device editor (lib/local-editor.ts): models/ggml-*.bin from whisper.cpp
+/models/

@@ -32,6 +32,8 @@ export interface LoopOptions {
   generateTitleCard?: (title: string, brief: string, outFile: string) => Promise<string | null>;
   generateEndCard?: (endTitle: string, brief: string, outFile: string) => Promise<string | null>;
   analyzeBrief?: (brief: string) => Promise<BriefAnalysis | null>;
+  /** Draw title and closing cards as plain text on black and never call the art model (the local editor). */
+  plainCards?: boolean;
   /** Omni B-roll generator (keyframe via Nano Banana, then image-to-video). Tests pass a fake. */
   generateShot?: (opts: ShotOptions) => Promise<ShotResult>;
 }
@@ -230,7 +232,7 @@ export async function runEdit(run: Run, editor: EditorModel, opts: LoopOptions =
       const current = edl;
 
       // Title card background: once per run (the plate carries no text, so a retitled card reuses it).
-      if (current.title && !current.titleImage) {
+      if (current.title && !current.titleImage && !opts.plainCards) {
         const file = abs(TITLE_IMAGE);
         const made = (await exists(file)) ? file : await optional("art", null, () => art(current.title, run.brief, file));
         if (made) current.titleImage = TITLE_IMAGE;
@@ -238,7 +240,7 @@ export async function runEdit(run: Run, editor: EditorModel, opts: LoopOptions =
       }
       // Closing card background, same discipline: painted once per run, reused until the line changes
       // (set_end_title drops endImage when it does, so a retitled card is repainted).
-      if (current.endTitle && !current.endImage) {
+      if (current.endTitle && !current.endImage && !opts.plainCards) {
         const file = abs(END_IMAGE);
         const made = (await exists(file)) ? file : await optional("art", null, () => endArt(current.endTitle!, run.brief, file));
         if (made) current.endImage = END_IMAGE;

@@ -383,13 +383,30 @@ visible at AI Studio billing, which the usage page links to.
 - ffmpeg / ffprobe for proxies, thumbnails, photo clips, music looping and rendering
 - Optional Remotion player preview
 
+## Which editor cuts
+
+`MODEL_PROVIDER` (lib/config.ts) picks the editor behind the one `EditorModel` seam (`transcribe`, `draft`, `critique`):
+
+| provider | what cuts | needs |
+| - | - | - |
+| `local` (default with no key) | lib/local-editor.ts: whisper.cpp word-timed transcripts, ffmpeg silence/scene detection, brief-scored speech regions picked to the brief's length, filler words cut out, captions from the words. No hosted model, no cost. | `whisper-cli` + `WHISPER_MODEL` for transcripts (without them: silence/scene regions only) |
+| `gemini` | lib/gemini.ts against Google: Argon drafts and critiques from the footage itself; Flash-Lite, Nano Banana, Lyria and Omni companions | `GEMINI_API_KEY` |
+| `nebula` | the same SDK pointed at a Nebula-hosted Gemini-protocol gateway | `NEBULA_BASE_URL`, `NEBULA_API_KEY`, optional `NEBULA_MODEL` / `NEBULA_FALLBACK_MODEL` |
+
+To move the cut to a Nebula-hosted Gemini model, change only env: `NEBULA_BASE_URL`, `NEBULA_API_KEY`, `NEBULA_MODEL`
+(e.g. `google:gemini-3.8-flash`), `NEBULA_FALLBACK_MODEL` (e.g. `google:gemini-4-argon`). The gateway has to speak
+the Gemini REST API including the Files API, because drafts and critiques are made from the uploaded video.
+`GET /api/health` reports which provider is live.
+
 ## Setup
 
 Requires Node 22 and ffmpeg on your PATH.
 
 ```
 npm install
-cp .env.example .env   # set GEMINI_API_KEY; every other variable is optional and documented there
+cp .env.example .env   # nothing is required: with no key the free local editor cuts (whisper.cpp + ffmpeg)
+brew install whisper-cpp && mkdir -p models && curl -L -o models/ggml-base.en.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin   # local transcripts + captions
 npm run dev            # open http://localhost:3000
 ```
 

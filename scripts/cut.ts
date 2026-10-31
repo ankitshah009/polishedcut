@@ -98,15 +98,15 @@ async function main(): Promise<number> {
 
   // lib/config reads RUNS_DIR and the model names at import time, so these imports come after .env.
   // safeName is the same sanitiser the API route uses, so run folders look identical.
-  const [{ runDir, safeName }, { describePatch }, { createGeminiEditor }, { runEdit }, { saveRun }] = await Promise.all([
+  const [{ runDir, safeName }, { describePatch }, { createEditor }, { runEdit }, { saveRun }] = await Promise.all([
     import("../lib/config"),
     import("../lib/format"),
-    import("../lib/gemini"),
+    import("../lib/editor"),
     import("../lib/loop"),
     import("../lib/store"),
   ]);
 
-  const editor = createGeminiEditor(); // throws a clear message when no key is configured
+  const editor = createEditor(); // throws a clear message when no key is configured
 
   const id = randomBytes(5).toString("hex");
   const dir = runDir(id);

@@ -37,7 +37,7 @@ describe("config defaults", () => {
     expect(c.DEMO_DIR).toBe(path.resolve("footage/demo"));
     expect(c.DEMO_BRIEF_ENV).toBe("");
     expect(c.DEFAULT_DEMO_BRIEF).toMatch(/Lumen/);
-    expect(c.MODELS).toEqual({ argon: "gemini-4-argon", flash: "gemini-3.8-flash", transcribe: "gemini-3.5-transcribe" });
+    expect(c.MODELS).toEqual({ argon: "gemini-4-argon", flash: "gemini-3.8-flash", transcribe: "gemini-3.5-transcribe", argonFallback: "" });
     expect(c.OUTPUT).toEqual({ width: 1280, height: 720, fps: 30 });
     expect(c.MAX_ITERATIONS).toBe(3);
     expect(c.REVISE_MAX_ITERATIONS).toBe(2);

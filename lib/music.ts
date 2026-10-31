@@ -6,8 +6,8 @@ import { promisify } from "node:util";
 
 import { GoogleGenAI } from "@google/genai";
 
-import { LLM_TIMEOUT_MS } from "./config";
-import { geminiKeys, withRetry } from "./gemini";
+
+import { NO_KEY_MESSAGE, geminiKeys, newGenAI, withRetry } from "./gemini";
 import { reportUsage } from "./usage-context";
 import type { EdlDraftSchema, PatchOp } from "./schema";
 import type { z } from "zod";
@@ -38,8 +38,8 @@ type Music = z.infer<typeof EdlDraftSchema>["music"];
 
 function musicClient(): MusicClient {
   const apiKey = geminiKeys()[0]?.[1];
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set. Add it to .env at the repo root.");
-  return new GoogleGenAI({ apiKey, httpOptions: { timeout: LLM_TIMEOUT_MS } });
+  if (!apiKey) throw new Error(NO_KEY_MESSAGE);
+  return newGenAI(apiKey);
 }
 
 /** Pick the Lyria model and build the prompt for a bed of `seconds`. Exported for tests. */
