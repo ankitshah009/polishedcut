@@ -5,6 +5,10 @@
  *   transcribe  whisper.cpp (`whisper-cli`, WHISPER_MODEL) -> word-timed transcript
  *   draft       speech regions from the words (or ffmpeg silencedetect / scene detection when a clip
  *               has no speech), scored against the brief, picked to the brief's target length, trimmed
+ *
+ * With FRAME_ANALYSIS=nebula (lib/config.ts) the per-clip analysis (words, sound, shots) comes from the
+ * Nebula Frame Analyst webhook (lib/frame-analyst.ts) instead of whisper.cpp + ffmpeg, and nothing
+ * falls back to the local tools when that call fails.
  *               on word boundaries, filler words cut out, captions built from the words
  *   critique    deterministic checks only; the loop's own lint (lib/lint.ts) supplies the patches
  *
@@ -16,7 +20,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { EXEC_MAX_BUFFER, MIN_CUT_SECONDS, WHISPER_BIN, WHISPER_MODEL, type OutputSize } from "./config";
+import { EXEC_MAX_BUFFER, FRAME_ANALYSIS, MIN_CUT_SECONDS, WHISPER_BIN, WHISPER_MODEL, type OutputSize } from "./config";
+import { FRAME_ANALYST_LABEL, createFrameAnalyst, type FrameAnalyzer } from "./frame-analyst";
 import { TITLE_SECONDS } from "./format";
 import { outputForClips, type EditorModel } from "./gemini";
 import { parseTargetSeconds } from "./lint";
@@ -25,7 +30,8 @@ import { EdlSchema, type Caption, type Critique, type Cut, type EDL, type Word }
 
 const execFileAsync = promisify(execFile);
 
-export const LOCAL_EDITOR_LABEL = "local editor (whisper.cpp + ffmpeg, no hosted model)";
+export const LOCAL_EDITOR_LABEL =
+  FRAME_ANALYSIS === "nebula" ? `local editor (${FRAME_ANALYST_LABEL} + ffmpeg render)` : "local editor (whisper.cpp + ffmpeg, no hosted model)";
 
 /** Longest cut the planner makes from one speech region; longer regions are split on word gaps. */
 export const MAX_SEGMENT_SECONDS = 9;
@@ -412,10 +418,20 @@ export async function localTranscriptionAvailable(): Promise<boolean> {
   }
 }
 
-export function createLocalEditor(): EditorModel {
+export interface LocalEditorOptions {
+  /**
+   * Where a clip's words / sound / shots come from. Default: the Nebula Frame Analyst webhook when
+   * FRAME_ANALYSIS=nebula, else whisper.cpp + ffmpeg on this machine. Tests inject a double.
+   */
+  frames?: FrameAnalyzer;
+}
+
+export function createLocalEditor(opts: LocalEditorOptions = {}): EditorModel {
+  const frames = opts.frames ?? (FRAME_ANALYSIS === "nebula" ? createFrameAnalyst() : undefined);
   return {
     async transcribe(input) {
       const duration = input.clip.duration || (await probeDuration(input.file));
+      if (frames) return (await frames({ clipId: input.clip.id, file: input.file, duration })).words;
       return transcribeLocally(input.file, duration);
     },
 
@@ -427,8 +443,13 @@ export function createLocalEditor(): EditorModel {
           const words = c.clip.transcript ?? [];
           let fallback: [number, number][] = [];
           if (words.length === 0) {
-            fallback = await soundRegions(c.file, duration);
-            if (fallback.length === 0) fallback = await shotRegions(c.file, duration);
+            if (frames) {
+              const a = await frames({ clipId: c.clip.id, file: c.file, duration });
+              fallback = a.sound.length > 0 ? a.sound : a.shots;
+            } else {
+              fallback = await soundRegions(c.file, duration);
+              if (fallback.length === 0) fallback = await shotRegions(c.file, duration);
+            }
           }
           return { id: c.clip.id, duration, words, fallback };
         }),

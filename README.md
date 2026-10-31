@@ -389,6 +389,7 @@ visible at AI Studio billing, which the usage page links to.
 | provider | what cuts | needs |
 | - | - | - |
 | `local` (default with no key) | lib/local-editor.ts: whisper.cpp word-timed transcripts, ffmpeg silence/scene detection, brief-scored speech regions picked to the brief's length, filler words cut out, captions from the words. No hosted model, no cost. | `whisper-cli` + `WHISPER_MODEL` for transcripts (without them: silence/scene regions only) |
+| `local` + `FRAME_ANALYSIS=nebula` | the same deterministic cut, but each clip's words / sound regions / shots come from the Nebula Frame Analyst webhook (lib/frame-analyst.ts) instead of whisper.cpp + ffmpeg, so analysis bills Nebula credits; ffmpeg still renders | `NEBULA_FRAME_WEBHOOK_URL` (+ `NEBULA_FRAME_WEBHOOK_SECRET`), `PUBLIC_URL` reachable from Nebula |
 | `gemini` | lib/gemini.ts against Google: Argon drafts and critiques from the footage itself; Flash-Lite, Nano Banana, Lyria and Omni companions | `GEMINI_API_KEY` |
 | `nebula` | the same SDK pointed at a Nebula-hosted Gemini-protocol gateway | `NEBULA_BASE_URL`, `NEBULA_API_KEY`, optional `NEBULA_MODEL` / `NEBULA_FALLBACK_MODEL` |
 

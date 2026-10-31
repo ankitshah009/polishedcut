@@ -48,6 +48,11 @@ Read this before touching the repo. Each note below cost someone time today.
   drops those; `lib/revise.ts` reuses it so revisions behave like the main loop.
 - Deterministic lint patches (`lib/lint.ts`) are applied **after** Argon's so a transcript-backed
   caption fix is never overwritten by a model rewrite. Preserve that order.
+- `lib/frame-analyst.ts` is the local editor's analysis over the Nebula Frame Analyst webhook
+  (`FRAME_ANALYSIS=nebula`). It has no network code beyond an injected `fetch`, so
+  `tests/frame-analyst.test.ts` runs offline; keep it that way. When the webhook is configured a failed
+  call is a warning/error, never a silent fall back to whisper/ffmpeg: otherwise "did Nebula do this
+  cut?" has no honest answer. Each clip's raw result lands in `runs/<id>/analysis/<clip>.json`.
 - `set_music` is a patch op (`lib/schema.ts`). `lib/loop.ts` applies it through
   `applyMusicPatch` before the cut/caption patches; `lib/patch.ts` also handles it so any other
   `applyPatches` caller gets the same result.
