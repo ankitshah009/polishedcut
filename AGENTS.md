@@ -57,10 +57,18 @@ Read this before touching the repo. Each note below cost someone time today.
 - `lib/frame-analyst.ts` is the local editor's analysis over the Nebula Frame Analyst webhook
   (`FRAME_ANALYSIS=nebula`). It has no network code beyond an injected `fetch`, so
   `tests/frame-analyst.test.ts` runs offline; keep it that way. When the webhook is configured a failed
-  call is a warning/error, never a silent fall back to whisper/ffmpeg: otherwise "did Nebula do this
-  cut?" has no honest answer. (Words are the one exception, logged: the agent looks at stills, so
-  whisper.cpp transcribes when the analysis carries no words.) Each clip's raw result lands in
-  `runs/<id>/analysis/<clip>.json` with `source` (the URL) and `via` (response / poll / callback).
+  call **fails the run**, never a silent fall back to whisper/ffmpeg: otherwise "did Nebula do this
+  cut?" has no honest answer. Every failure is a `FrameAnalystError` (`lib/frame-analyst-error.ts`) with
+  `kind` = `config | unreachable | http | timeout | bad_payload`; `lib/loop.ts` rethrows it from the
+  transcribe stage (other transcribe failures stay warnings) and `scripts/cut.ts` exits non-zero. (Words
+  are the one exception, logged: the agent looks at stills, so whisper.cpp transcribes when the analysis
+  carries no words.) The POST retries with exponential backoff (`NEBULA_FRAME_RETRIES`,
+  `NEBULA_FRAME_BACKOFF_MS`) on network errors, 429 and 5xx only, inside `NEBULA_FRAME_TIMEOUT_MS`; a 4xx
+  such as 401 never retries. Tests inject `fetch` and `sleep` doubles. `validateFrameAnalystConfig()`
+  (`lib/config.ts`) runs from `instrumentation.ts` and `scripts/cut.ts`: with `FRAME_ANALYSIS=nebula`
+  a missing URL / secret / `PUBLIC_URL`, or a non-https URL, stops the boot with the reasons listed.
+  Each clip's raw result lands in `runs/<id>/analysis/<clip>.json` with `source` (the URL) and `via`
+  (response / poll / callback); keep that shape.
 - Nebula's inbound webhook (`api.nebula.gg/webhooks/triggers/<id>/webhook`) authenticates with
   `X-Webhook-Secret` and only acknowledges (`{ success, message }`); the agent posts the result to the
   payload's `callback_url`, served by `app/api/frame-analysis/callback/[job]/[token]/route.ts` from the

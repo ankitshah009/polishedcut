@@ -5,6 +5,7 @@ import { generateEndCard, generateTitleCard } from "./art";
 import { analyzeBrief, briefAnalysisLine, type BriefAnalysis } from "./brief";
 import { generateBroll, type ShotOptions, type ShotResult } from "./broll";
 import { MAX_ITERATIONS, runDir, TITLE_SECONDS } from "./config";
+import { FrameAnalystError, isFrameAnalystError } from "./frame-analyst-error";
 import type { ClipInput, EditorModel } from "./gemini";
 import { lintEdl } from "./lint";
 import { makeProxy, probeDuration } from "./media";
@@ -166,8 +167,16 @@ export async function runEdit(run: Run, editor: EditorModel, opts: LoopOptions =
     const clipFiles: Record<string, string> = Object.fromEntries(run.clips.map((c) => [c.id, abs(c.path)]));
 
     // Every clip is transcribed at once; a failed clip becomes a warning and the draft goes on without it.
+    // Except the Nebula Frame Analyst: with the webhook configured its failure fails the run (no silent
+    // fallback to whisper/ffmpeg), so "did Nebula do this cut?" always has an honest answer.
     await timed("transcribe", async () => {
       const results = await Promise.allSettled(inputs.map((input) => editor.transcribe(input)));
+      const nebula = results.find((r): r is PromiseRejectedResult => r.status === "rejected" && isFrameAnalystError(r.reason));
+      if (nebula) {
+        const i = results.indexOf(nebula);
+        const err = nebula.reason as FrameAnalystError;
+        throw new FrameAnalystError(err.kind, `frame analysis failed for ${inputs[i].clip.id} (${err.kind}): ${err.message}`, { status: err.status, cause: err });
+      }
       results.forEach((r, i) => {
         if (r.status === "fulfilled") inputs[i].clip.transcript = r.value;
         else run.warnings.push(`transcript unavailable for ${inputs[i].clip.id}: ${describeError(r.reason)}`);

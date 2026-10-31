@@ -12,6 +12,8 @@ const KEYS = [
   "SSE_HEARTBEAT_MS", "LLM_TIMEOUT_MS", "PROXY_HEIGHT", "REVISE_MAX_ITERATIONS", "EXEC_MAX_BUFFER",
   "ARGON_MODEL", "FLASH_MODEL", "TRANSCRIBE_MODEL",
   "PROXY_LONG_EDGE", "PROXY_FPS", "MAX_CLIP_SECONDS", "MAX_TOTAL_SECONDS", "GEMINI_CONCURRENCY", "KEEP_UPLOADS", "ORPHAN_AFTER_MS",
+  "FRAME_ANALYSIS", "NEBULA_FRAME_WEBHOOK_URL", "NEBULA_FRAME_WEBHOOK_SECRET", "NEBULA_FRAME_RETRIES", "NEBULA_FRAME_BACKOFF_MS",
+  "NEBULA_FRAME_TIMEOUT_MS", "PUBLIC_URL", "NEXT_PUBLIC_URL",
 ];
 const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 
@@ -140,6 +142,85 @@ describe("config defaults", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("frame analyst config", () => {
+  const complete = {
+    FRAME_ANALYSIS: "nebula",
+    NEBULA_FRAME_WEBHOOK_URL: "https://api.nebula.gg/webhooks/triggers/abc/webhook",
+    NEBULA_FRAME_WEBHOOK_SECRET: "s3cret",
+    PUBLIC_URL: "https://polishedcut.example",
+  };
+
+  it("has nothing to check under the local analysis, even with a broken webhook URL lying around", async () => {
+    let c = await fresh({});
+    expect(c.FRAME_ANALYSIS).toBe("local");
+    expect(c.frameAnalystConfigProblems()).toEqual([]);
+    expect(() => c.validateFrameAnalystConfig()).not.toThrow();
+    c = await fresh({ FRAME_ANALYSIS: "local", NEBULA_FRAME_WEBHOOK_URL: "http://nope" });
+    expect(() => c.validateFrameAnalystConfig()).not.toThrow();
+  });
+
+  it("reads the retry knobs with their defaults and overrides", async () => {
+    let c = await fresh({});
+    expect(c.FRAME_ANALYST_RETRIES).toBe(3);
+    expect(c.FRAME_ANALYST_BACKOFF_MS).toBe(1000);
+    c = await fresh({ NEBULA_FRAME_RETRIES: "0", NEBULA_FRAME_BACKOFF_MS: "250" });
+    expect(c.FRAME_ANALYST_RETRIES).toBe(0);
+    expect(c.FRAME_ANALYST_BACKOFF_MS).toBe(250);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    c = await fresh({ NEBULA_FRAME_RETRIES: "-1", NEBULA_FRAME_BACKOFF_MS: "soon" });
+    expect(c.FRAME_ANALYST_RETRIES).toBe(3);
+    expect(c.FRAME_ANALYST_BACKOFF_MS).toBe(1000);
+    warn.mockRestore();
+  });
+
+  it("fails loudly when FRAME_ANALYSIS=nebula has no URL, secret or PUBLIC_URL", async () => {
+    const c = await fresh({ FRAME_ANALYSIS: "nebula" });
+    const problems = c.frameAnalystConfigProblems();
+    expect(problems).toHaveLength(3);
+    expect(problems[0]).toMatch(/NEBULA_FRAME_WEBHOOK_URL is not set/);
+    expect(problems[1]).toMatch(/NEBULA_FRAME_WEBHOOK_SECRET is not set/);
+    expect(problems[2]).toMatch(/PUBLIC_URL is not set/);
+    let err: unknown;
+    try {
+      c.validateFrameAnalystConfig();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { name: string }).name).toBe("FrameAnalystError");
+    expect((err as { kind: string }).kind).toBe("config");
+    expect((err as Error).message).toMatch(/^FRAME_ANALYSIS=nebula but the Frame Analyst webhook is not fully configured: NEBULA_FRAME_WEBHOOK_URL is not set; NEBULA_FRAME_WEBHOOK_SECRET is not set.*; PUBLIC_URL is not set.*FRAME_ANALYSIS=local/);
+  });
+
+  it("applies when the webhook URL alone selects nebula, and names each missing piece", async () => {
+    const c = await fresh({ NEBULA_FRAME_WEBHOOK_URL: complete.NEBULA_FRAME_WEBHOOK_URL, PUBLIC_URL: complete.PUBLIC_URL });
+    expect(c.FRAME_ANALYSIS).toBe("nebula");
+    expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/NEBULA_FRAME_WEBHOOK_SECRET is not set/)]);
+    expect(() => c.validateFrameAnalystConfig()).toThrow(/NEBULA_FRAME_WEBHOOK_SECRET/);
+  });
+
+  it("insists on https for the webhook URL and PUBLIC_URL, and on them being URLs at all", async () => {
+    let c = await fresh({ ...complete, NEBULA_FRAME_WEBHOOK_URL: "http://api.nebula.gg/webhooks/triggers/abc/webhook" });
+    expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/NEBULA_FRAME_WEBHOOK_URL must be https \(got http\)/)]);
+    c = await fresh({ ...complete, PUBLIC_URL: "http://10.0.0.5:3000" });
+    expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/PUBLIC_URL must be https.*\(got http\)/)]);
+    // The local stand-in (scripts/frame-analyst-stub.ts) runs over plain http on loopback; that stays allowed.
+    c = await fresh({ ...complete, NEBULA_FRAME_WEBHOOK_URL: "http://127.0.0.1:3799/analyze", PUBLIC_URL: "http://localhost:3100" });
+    expect(c.frameAnalystConfigProblems()).toEqual([]);
+    c = await fresh({ ...complete, NEBULA_FRAME_WEBHOOK_URL: "not a url", PUBLIC_URL: "also not" });
+    expect(c.frameAnalystConfigProblems()).toEqual([expect.stringMatching(/NEBULA_FRAME_WEBHOOK_URL is not a valid URL/), expect.stringMatching(/PUBLIC_URL is not a valid URL/)]);
+  });
+
+  it("passes a complete configuration (NEXT_PUBLIC_URL standing in for PUBLIC_URL)", async () => {
+    let c = await fresh(complete);
+    expect(c.frameAnalystConfigProblems()).toEqual([]);
+    expect(() => c.validateFrameAnalystConfig()).not.toThrow();
+    c = await fresh({ ...complete, PUBLIC_URL: undefined, NEXT_PUBLIC_URL: "https://polishedcut.example/" });
+    expect(c.PUBLIC_URL).toBe("https://polishedcut.example");
+    expect(() => c.validateFrameAnalystConfig()).not.toThrow();
   });
 });
 

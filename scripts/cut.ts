@@ -98,7 +98,7 @@ async function main(): Promise<number> {
 
   // lib/config reads RUNS_DIR and the model names at import time, so these imports come after .env.
   // safeName is the same sanitiser the API route uses, so run folders look identical.
-  const [{ runDir, safeName }, { describePatch }, { createEditor }, { runEdit }, { saveRun }] = await Promise.all([
+  const [{ runDir, safeName, validateFrameAnalystConfig }, { describePatch }, { createEditor }, { runEdit }, { saveRun }] = await Promise.all([
     import("../lib/config"),
     import("../lib/format"),
     import("../lib/editor"),
@@ -106,6 +106,9 @@ async function main(): Promise<number> {
     import("../lib/store"),
   ]);
 
+  // FRAME_ANALYSIS=nebula with a missing URL / secret / https PUBLIC_URL is a configuration error, reported
+  // before any clip is copied. Note the callback leg only works inside the server behind PUBLIC_URL (AGENTS.md).
+  validateFrameAnalystConfig(); // throws FrameAnalystError(kind "config") with every problem listed
   const editor = createEditor(); // throws a clear message when no key is configured
 
   const id = randomBytes(5).toString("hex");
@@ -202,6 +205,7 @@ async function main(): Promise<number> {
 main()
   .then((code) => process.exit(code))
   .catch((err: unknown) => {
-    console.error("FAILED:", err instanceof Error ? err.message : String(err));
+    const kind = (err as { name?: string; kind?: string } | null)?.name === "FrameAnalystError" ? ` (frame analyst: ${(err as { kind?: string }).kind})` : "";
+    console.error(`FAILED${kind}:`, err instanceof Error ? err.message : String(err));
     process.exit(1);
   });

@@ -382,6 +382,22 @@ describe("runEdit", { timeout: 120_000 }, () => {
     expect(out.warnings.some((w) => w.includes("transcript unavailable") && w.includes("no asr"))).toBe(true);
   });
 
+  it("a Frame Analyst failure in transcribe fails the run instead of becoming a warning", async () => {
+    const { FrameAnalystError } = await import("../lib/frame-analyst-error");
+    const run = await makeRun();
+    const transcribe: EditorModel["transcribe"] = async ({ clip }) => {
+      if (clip.id === "clip2") throw new FrameAnalystError("http", "Frame Analyst webhook 401: bad secret", { status: 401 });
+      return [{ text: "word", start: 0, end: 0.4 }];
+    };
+    const draft = vi.fn(async () => draftEdl());
+    const out = await runEdit(run, editor({ transcribe, draft }), withFakes({ maxIterations: 1 }));
+    expect(out.status).toBe("error");
+    expect(out.error).toBe("FrameAnalystError: frame analysis failed for clip2 (http): Frame Analyst webhook 401: bad secret");
+    expect(out.warnings.filter((w) => w.includes("transcript unavailable"))).toHaveLength(0);
+    expect(draft).not.toHaveBeenCalled();
+    expect((out.timings ?? []).map((t) => t.stage)).toEqual(["prepare", "transcribe"]);
+  });
+
   it("transcribes clips in parallel; one failure does not lose the others", async () => {
     const run = await makeRun();
     let inFlight = 0;
