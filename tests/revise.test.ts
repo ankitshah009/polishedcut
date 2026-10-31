@@ -16,9 +16,14 @@ let counter = 0;
 
 const NOTE = "make it shorter, open on clip2";
 
+const savedProvider = process.env.MODEL_PROVIDER;
+
 beforeAll(async () => {
   tmp = mkdtempSync(path.join(os.tmpdir(), "revise-test-"));
   process.env.RUNS_DIR = tmp;
+  // Pin the Gemini provider: the "missing API key" test below needs a provider that requires a key
+  // (unset, a keyless environment selects the local editor and the revision would simply succeed).
+  process.env.MODEL_PROVIDER = "gemini";
   vi.resetModules();
   const config = await import("../lib/config");
   expect(config.RUNS_DIR).toBe(path.resolve(tmp));
@@ -26,7 +31,11 @@ beforeAll(async () => {
   ({ renderEdl } = await import("../lib/render"));
 });
 
-afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+afterAll(() => {
+  if (savedProvider === undefined) delete process.env.MODEL_PROVIDER;
+  else process.env.MODEL_PROVIDER = savedProvider;
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 const baseEdl = (): EDL => ({
   title: "", width: 1280, height: 720, fps: 30, captions: [], overlays: [],

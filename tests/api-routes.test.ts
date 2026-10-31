@@ -25,6 +25,7 @@ const saved = {
   MAX_TOTAL_SECONDS: process.env.MAX_TOTAL_SECONDS,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_API_KEY_1: process.env.GEMINI_API_KEY_1,
+  MODEL_PROVIDER: process.env.MODEL_PROVIDER,
 };
 
 beforeAll(async () => {
@@ -37,7 +38,9 @@ beforeAll(async () => {
   process.env.MAX_UPLOAD_BYTES = String(400 * 1024); // 400 KiB, so a tiny fixture can be "too large"
   process.env.MAX_CLIP_SECONDS = "2"; // a 3s fixture is "too long"
   process.env.MAX_TOTAL_SECONDS = "5"; // three 1.9s fixtures together are "too much footage"; one 4s photo clip is fine
-  // No key: a started loop records the missing key on the run instead of calling Gemini.
+  // Gemini provider with no key: a started loop records the missing key on the run instead of
+  // calling Gemini. (Unset, a missing key would select the local editor, which needs no key.)
+  process.env.MODEL_PROVIDER = "gemini";
   delete process.env.GEMINI_API_KEY;
   delete process.env.GEMINI_API_KEY_1;
   vi.resetModules();

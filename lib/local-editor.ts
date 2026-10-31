@@ -36,7 +36,7 @@ const DEFAULT_TARGET_FRACTION = 0.6;
 const DEFAULT_TARGET_CAP = 30;
 const FILLER_RE = /^(um+|uh+|erm+|hmm+|mm+|ah+)$/i;
 const WANTS_FILLER_CUT = /\b(filler|ums?|uhs?|dead air|pauses?)\b/i;
-const WANTS_CAPTIONS = /\b(caption|subtitle|on-screen text|text on screen)\b/i;
+const WANTS_CAPTIONS = /\b(captions?|captioned|subtitles?|subtitled|on-screen text|text on screen)\b/i;
 const STOPWORDS = new Set(
   "the a an and or but for with from into onto over under this that these those then than very just like keep open end start close add remove cut make show use second seconds minute minutes long short clip clips video teaser recap".split(" "),
 );
