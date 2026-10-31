@@ -6,9 +6,11 @@
  *   draft       speech regions from the words (or ffmpeg silencedetect / scene detection when a clip
  *               has no speech), scored against the brief, picked to the brief's target length, trimmed
  *
- * With FRAME_ANALYSIS=nebula (lib/config.ts) the per-clip analysis (words, sound, shots) comes from the
- * Nebula Frame Analyst webhook (lib/frame-analyst.ts) instead of whisper.cpp + ffmpeg, and nothing
- * falls back to the local tools when that call fails.
+ * With FRAME_ANALYSIS=nebula (lib/config.ts) the per-clip analysis (sound, shots, and words when the
+ * agent hears any) comes from the Nebula Frame Analyst webhook (lib/frame-analyst.ts) instead of
+ * whisper.cpp + ffmpeg, and nothing falls back to the local tools when that call fails. The Frame
+ * Analyst looks at stills, so its answer normally carries no words; whisper.cpp then supplies the
+ * transcript (logged as such) while shots and sound still come from Nebula.
  *               on word boundaries, filler words cut out, captions built from the words
  *   critique    deterministic checks only; the loop's own lint (lib/lint.ts) supplies the patches
  *
@@ -431,7 +433,12 @@ export function createLocalEditor(opts: LocalEditorOptions = {}): EditorModel {
   return {
     async transcribe(input) {
       const duration = input.clip.duration || (await probeDuration(input.file));
-      if (frames) return (await frames({ clipId: input.clip.id, file: input.file, duration })).words;
+      if (frames) {
+        const a = await frames({ clipId: input.clip.id, file: input.file, duration });
+        if (a.words.length > 0 || !(await localTranscriptionAvailable())) return a.words;
+        console.log(`[local-editor] ${input.clip.id}: ${a.source} returned no words; transcript from whisper.cpp, shots/sound from the analysis`);
+        return transcribeLocally(input.file, duration);
+      }
       return transcribeLocally(input.file, duration);
     },
 

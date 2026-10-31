@@ -3,7 +3,7 @@
 // checking that the Nebula job answers the same way. It is NOT Nebula: the analysis here is the same
 // whisper.cpp + ffmpeg work the local editor would do, served over HTTP.
 //
-//   npx tsx scripts/frame-analyst-stub.ts [--port 3777] [--secret s3cret] [--sync]
+//   npx tsx scripts/frame-analyst-stub.ts [--port 3777] [--secret s3cret] [--sync | --nebula]
 //
 // Then, in another shell, with the app serving runs (PUBLIC_URL must point at it):
 //   FRAME_ANALYSIS=nebula NEBULA_FRAME_WEBHOOK_URL=http://127.0.0.1:3777/analyze \
@@ -13,6 +13,10 @@
 // POST /analyze answers 202 with a status_url (or 200 with the result under --sync); GET /jobs/<id>
 // answers { status: "running" } until the analysis is done, then the result:
 //   { words: [{text,start,end}], sound: [[s,e]], shots: [[s,e]], summary }
+// --nebula answers the way api.nebula.gg's inbound webhook does: it checks X-Webhook-Secret, acknowledges
+// with 200 { success: true, message } at once, and POSTs the result to the payload's callback_url when
+// the analysis is done. That is the path the real job takes, so a cut driven through it exercises the
+// callback route (app/api/frame-analysis/callback) end to end.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -23,15 +27,17 @@ interface Args {
   port: number;
   secret: string;
   sync: boolean;
+  nebula: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { port: 3777, secret: "", sync: false };
+  const args: Args = { port: 3777, secret: "", sync: false, nebula: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--secret") args.secret = argv[++i] ?? "";
     else if (a === "--sync") args.sync = true;
+    else if (a === "--nebula") args.nebula = true;
     else {
       console.error(`unknown option ${a}`);
       process.exit(2);
@@ -93,14 +99,30 @@ async function main(): Promise<void> {
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      if (args.secret && req.headers.authorization !== `Bearer ${args.secret}`) return send(res, 401, { error: "bad or missing bearer secret" });
+      if (args.secret) {
+        const given = args.nebula ? req.headers["x-webhook-secret"] : req.headers.authorization?.replace(/^Bearer /, "");
+        if (given !== args.secret) return send(res, 401, { error: { message: "Invalid authentication token" } });
+      }
 
       if (req.method === "POST" && url.pathname === "/analyze") {
-        const body = (await readJson(req)) as { task?: string; clip?: { id?: string; url?: string; duration_seconds?: number } } | null;
+        const body = (await readJson(req)) as { task?: string; clip?: { id?: string; url?: string; duration_seconds?: number }; frames?: unknown[]; callback_url?: string } | null;
         const clip = body?.clip;
         if (body?.task !== "frame-analysis" || !clip?.url) return send(res, 400, { error: "expected { task: 'frame-analysis', clip: { url } }" });
         const duration = Number(clip.duration_seconds ?? 0);
-        console.log(`[stub] ${clip.id ?? "clip"}: analysing ${clip.url}`);
+        console.log(`[stub] ${clip.id ?? "clip"}: analysing ${clip.url} (${body.frames?.length ?? 0} stills listed)`);
+        if (args.nebula) {
+          const callback = body.callback_url;
+          if (!callback) return send(res, 400, { error: "nebula mode needs callback_url in the payload" });
+          send(res, 200, { success: true, message: "Webhook received" });
+          try {
+            const result = await analyze(clip.url, duration);
+            const r = await fetch(callback, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) });
+            console.log(`[stub] ${clip.id ?? "clip"}: posted result to ${callback} -> ${r.status}`);
+          } catch (err) {
+            console.error(`[stub] ${clip.id ?? "clip"}: ${String(err)}`);
+          }
+          return;
+        }
         if (args.sync) return send(res, 200, await analyze(clip.url, duration));
         const id = randomBytes(6).toString("hex");
         jobs.set(id, { status: "running" });
@@ -128,7 +150,8 @@ async function main(): Promise<void> {
   });
 
   server.listen(args.port, "127.0.0.1", () => {
-    console.log(`[stub] Frame Analyst stand-in on http://127.0.0.1:${args.port}/analyze (${args.sync ? "sync 200" : "202 + poll"}${args.secret ? ", bearer secret" : ""})`);
+    const mode = args.nebula ? "nebula: ack + callback" : args.sync ? "sync 200" : "202 + poll";
+    console.log(`[stub] Frame Analyst stand-in on http://127.0.0.1:${args.port}/analyze (${mode}${args.secret ? (args.nebula ? ", X-Webhook-Secret" : ", bearer secret") : ""})`);
   });
 }
 

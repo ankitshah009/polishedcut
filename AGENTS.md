@@ -52,7 +52,14 @@ Read this before touching the repo. Each note below cost someone time today.
   (`FRAME_ANALYSIS=nebula`). It has no network code beyond an injected `fetch`, so
   `tests/frame-analyst.test.ts` runs offline; keep it that way. When the webhook is configured a failed
   call is a warning/error, never a silent fall back to whisper/ffmpeg: otherwise "did Nebula do this
-  cut?" has no honest answer. Each clip's raw result lands in `runs/<id>/analysis/<clip>.json`.
+  cut?" has no honest answer. (Words are the one exception, logged: the agent looks at stills, so
+  whisper.cpp transcribes when the analysis carries no words.) Each clip's raw result lands in
+  `runs/<id>/analysis/<clip>.json` with `source` (the URL) and `via` (response / poll / callback).
+- Nebula's inbound webhook (`api.nebula.gg/webhooks/triggers/<id>/webhook`) authenticates with
+  `X-Webhook-Secret` and only acknowledges (`{ success, message }`); the agent posts the result to the
+  payload's `callback_url`, served by `app/api/frame-analysis/callback/[job]/[token]/route.ts` from the
+  process-wide `callbacks` registry. The callback therefore only works in the server process behind
+  `PUBLIC_URL`, not in `scripts/cut.ts`.
 - `set_music` is a patch op (`lib/schema.ts`). `lib/loop.ts` applies it through
   `applyMusicPatch` before the cut/caption patches; `lib/patch.ts` also handles it so any other
   `applyPatches` caller gets the same result.
