@@ -1,28 +1,30 @@
 /**
- * Photon Spectrum adapter, platform-agnostic half. One agent sits behind iMessage, WhatsApp,
- * Telegram and Slack (photon.codes); whatever the platform, Spectrum hands us `[space, message]`
- * pairs and we answer into the space. This module holds the conversation logic and calls the same
- * `createRun` the dashboard upload uses, so a clip texted in is cut by the very same pipeline.
+ * Photon chat adapter, platform-agnostic half. One agent sits behind iMessage, Telegram, WhatsApp
+ * Business and SMS through Photon's Beta (2.0) platform (app.beta.photon.codes). Whatever the
+ * platform, Photon hands us a received `Message` and we answer into its `space`. This module holds
+ * the conversation logic and calls the same `createRun` the dashboard upload uses, so a clip texted
+ * in is cut by the very same pipeline.
  *
  * Flow per conversation (a "space": one DM or group):
  *   clip(s) + text  ->  createRun(brief, clips)  ->  wait for the loop  ->  reply with the mp4
  *   text alone, cut already delivered  ->  director's note (startRevision)  ->  reply with the new mp4
  *   text alone, nothing pending  ->  short help
  *
- * No SDK import here beyond types: tests drive `handleInbound` with plain objects (tests/spectrum.test.ts).
+ * No HTTP here: `Chat` (the reply surface) and `HandlerDeps.resolveAttachment` are injected, so
+ * tests/photon.test.ts drives `handleInbound` with plain objects and never touches the network.
+ * The shapes below are the Beta API's public `Message` / `Content` (types from @photon-ai/api),
+ * narrowed to what the conversation needs.
  */
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import type { Attachment, Content, Message } from "spectrum-ts";
-
 import {
   BRIEF_MAX_CHARS,
   NOTE_MAX_CHARS,
+  PHOTON_MAX_ATTACHMENT_BYTES,
+  PHOTON_RUN_TIMEOUT_MS,
+  PHOTON_SETTLE_MS,
   PUBLIC_URL,
-  SPECTRUM_MAX_ATTACHMENT_BYTES,
-  SPECTRUM_RUN_TIMEOUT_MS,
-  SPECTRUM_SETTLE_MS,
   isVideoName,
   runDir,
 } from "./config";
@@ -33,11 +35,54 @@ import type { Run } from "./schema";
 import { isInProgress, loadRun, subscribe } from "./store";
 
 // ---------------------------------------------------------------------------
-// Replies (plain text: iMessage and WhatsApp have no markdown)
+// Beta API shapes (structural subsets of @photon-ai/api's Message / Content)
+
+/** `content` of a Beta message: text, one attachment, or a group of parts. Other kinds are ignored. */
+export type InboundContent =
+  | { type: "text"; text: string; format?: string }
+  | { type: "attachment"; attachmentId: string; metadata?: unknown }
+  | { type: "group"; parts: InboundContent[] }
+  | { type: string; [key: string]: unknown };
+
+/** The slice of a Beta `Message` the handler reads. `status: "received"` marks an inbound message. */
+export interface InboundMessage {
+  id: string;
+  platform: string;
+  status: string;
+  content: InboundContent;
+  /** The person who texted. `handle` is their phone number / username when the platform exposes one. */
+  sentBy: { id: string; handle?: string };
+  /** The agent's own line that received it; its `id` is the `senderId` of every reply. */
+  receivedBy?: { id: string };
+  space: { id: string; kind?: string };
+}
+
+/** An inbound attachment, resolved (metadata + bytes) by the transport. */
+export interface InboundAttachment {
+  id: string;
+  name?: string;
+  mimeType: string;
+  size?: number;
+  read: () => Promise<Buffer>;
+}
+
+/** The reply surface for one space. lib/photon.ts builds the real one over the HTTP API. */
+export interface Chat {
+  readonly spaceId: string;
+  readonly platform: string;
+  /** Beta iMessage carries text and images only, so a video render goes out as a link there. */
+  readonly canSendVideo: boolean;
+  sendText(text: string): Promise<void>;
+  sendFile(file: string, opts: { name: string; mimeType: string; caption?: string }): Promise<void>;
+  setTyping(on: boolean): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Replies (plain text: iMessage and WhatsApp render no markdown)
 
 export const REPLIES = {
   help: [
-    "Hi, this is Framecut. Send me a clip (or a few) and tell me the cut you want in one line,",
+    "Hi, this is PolishedCut. Send me a clip (or a few) and tell me the cut you want in one line,",
     'e.g. "30s recap with captions, open on the strongest moment".',
     "I'll cut it, watch my own render, fix it, and text the finished video back.",
   ].join(" "),
@@ -58,6 +103,10 @@ export const REPLIES = {
     ];
     return lines.filter(Boolean).join(" ");
   },
+  linkOnly: (run: Run) =>
+    PUBLIC_URL
+      ? `Watch and download the video here: ${PUBLIC_URL}/s/${run.id}`
+      : "I can't attach the video on this platform and PUBLIC_URL is not set on the server, so there is no link to send.",
   tooBig: (run: Run) =>
     PUBLIC_URL
       ? `The render is too large to attach here; watch and download it at ${PUBLIC_URL}/s/${run.id}`
@@ -96,13 +145,13 @@ interface Session {
 
 // Kept on globalThis so a dev hot reload does not forget who sent what.
 const g = globalThis as typeof globalThis & {
-  __spectrumSessions?: Map<string, Session>;
-  __spectrumSeen?: Set<string>;
+  __photonSessions?: Map<string, Session>;
+  __photonSeen?: Set<string>;
 };
-g.__spectrumSessions ??= new Map();
-g.__spectrumSeen ??= new Set();
-const sessions = g.__spectrumSessions;
-const seen = g.__spectrumSeen;
+g.__photonSessions ??= new Map();
+g.__photonSeen ??= new Set();
+const sessions = g.__photonSessions;
+const seen = g.__photonSeen;
 const SEEN_LIMIT = 5000;
 
 function session(spaceKey: string): Session {
@@ -114,7 +163,7 @@ function session(spaceKey: string): Session {
   return s;
 }
 
-/** Deliveries are at-least-once (stream and webhook alike); drop a message id seen before. */
+/** Deliveries are at-least-once (Socket.IO replay and webhooks alike); drop a message id seen before. */
 function firstTime(id: string): boolean {
   if (seen.has(id)) return false;
   seen.add(id);
@@ -139,27 +188,23 @@ export function resetSessions(): void {
 
 export interface Flattened {
   texts: string[];
-  attachments: Attachment[];
+  attachmentIds: string[];
   other: string[];
 }
 
-/** Pull texts and attachments out of any inbound content shape (text, attachment, group, reply, markdown). */
-export function flattenContent(content: Content, out: Flattened = { texts: [], attachments: [], other: [] }): Flattened {
+/** Pull texts and attachment ids out of any inbound content shape (text, attachment, group). */
+export function flattenContent(content: InboundContent, out: Flattened = { texts: [], attachmentIds: [], other: [] }): Flattened {
   switch (content.type) {
-    case "text":
-      if (content.text.trim()) out.texts.push(content.text.trim());
+    case "text": {
+      const text = typeof content.text === "string" ? content.text.trim() : "";
+      if (text) out.texts.push(text);
       break;
-    case "markdown":
-      if (content.markdown.trim()) out.texts.push(content.markdown.trim());
-      break;
+    }
     case "attachment":
-      out.attachments.push(content);
+      if (typeof content.attachmentId === "string") out.attachmentIds.push(content.attachmentId);
       break;
     case "group":
-      for (const item of content.items) flattenContent(item.content, out);
-      break;
-    case "reply":
-      flattenContent(content.content as Content, out);
+      if (Array.isArray(content.parts)) for (const part of content.parts) flattenContent(part as InboundContent, out);
       break;
     default:
       out.other.push(content.type);
@@ -167,11 +212,12 @@ export function flattenContent(content: Content, out: Flattened = { texts: [], a
   return out;
 }
 
-function isFootage(a: Attachment): boolean {
-  return a.mimeType.startsWith("video/") || isVideoName(a.name) || a.mimeType.startsWith("image/") || isImageFile(a.name, a.mimeType);
+function isFootage(a: InboundAttachment): boolean {
+  const name = a.name ?? "";
+  return a.mimeType.startsWith("video/") || isVideoName(name) || a.mimeType.startsWith("image/") || isImageFile(name, a.mimeType);
 }
 
-function fileNameFor(a: Attachment, i: number): string {
+function fileNameFor(a: InboundAttachment, i: number): string {
   if (a.name && /\.[A-Za-z0-9]{2,5}$/.test(a.name)) return a.name;
   const ext = a.mimeType.startsWith("video/") ? (a.mimeType.includes("quicktime") ? ".mov" : ".mp4") : a.mimeType.includes("png") ? ".png" : a.mimeType.includes("heic") ? ".heic" : ".jpg";
   return `clip${i + 1}${ext}`;
@@ -181,7 +227,7 @@ function fileNameFor(a: Attachment, i: number): string {
 // Waiting on the loop
 
 /** Resolve when `id` reaches a terminal status, or reject after `timeoutMs`. Uses the store bus; no polling. */
-export function waitForRun(id: string, timeoutMs: number = SPECTRUM_RUN_TIMEOUT_MS): Promise<Run> {
+export function waitForRun(id: string, timeoutMs: number = PHOTON_RUN_TIMEOUT_MS): Promise<Run> {
   return new Promise<Run>((resolve, reject) => {
     let done = false;
     const finish = (fn: () => void) => {
@@ -212,11 +258,13 @@ export interface HandlerDeps {
   startRevision: (run: Run, note: string) => void;
   /** Resolve the absolute path and size of the mp4 to send back, or null when it is missing. */
   renderFor: (run: Run) => Promise<{ file: string; size: number } | null>;
+  /** Fetch an inbound attachment's metadata and a reader for its bytes (GET …/attachments/{id}[/content]). */
+  resolveAttachment: (attachmentId: string) => Promise<InboundAttachment>;
   settleMs: number;
   log: (msg: string, ...rest: unknown[]) => void;
 }
 
-export const defaultDeps: HandlerDeps = {
+export const defaultDeps: Omit<HandlerDeps, "resolveAttachment"> = {
   createRun: realCreateRun,
   waitForRun,
   loadRun,
@@ -231,67 +279,58 @@ export const defaultDeps: HandlerDeps = {
       return null;
     }
   },
-  settleMs: SPECTRUM_SETTLE_MS,
-  log: (msg, ...rest) => console.log(`[spectrum] ${msg}`, ...rest),
+  settleMs: PHOTON_SETTLE_MS,
+  log: (msg, ...rest) => console.log(`[photon] ${msg}`, ...rest),
 };
 
-/** `spectrum-ts` content builders are injected too, so tests need no SDK at runtime. */
-export interface Builders {
-  attachment: (input: string | Buffer, options?: { mimeType?: string; name?: string }) => unknown;
-}
-
-/** The slice of a Spectrum `Space` the handler uses; loose enough for a plain object in tests. */
-export interface Sendable {
-  readonly id: string;
-  readonly __platform: string;
-  send(content: unknown): Promise<unknown>;
-  startTyping(): Promise<void>;
-  stopTyping(): Promise<void>;
-}
-
-async function say(space: Sendable, text: string, log: HandlerDeps["log"]): Promise<void> {
+async function say(chat: Chat, text: string, log: HandlerDeps["log"]): Promise<void> {
   try {
-    await space.send(text);
+    await chat.sendText(text);
   } catch (err) {
-    log(`could not send to ${space.__platform}:${space.id}:`, err);
+    log(`could not send to ${chat.platform}:${chat.spaceId}:`, err);
   }
 }
 
-async function typing(space: Sendable, on: boolean): Promise<void> {
+async function typing(chat: Chat, on: boolean): Promise<void> {
   try {
-    await (on ? space.startTyping() : space.stopTyping());
+    await chat.setTyping(on);
   } catch {
     // best effort on every platform
   }
 }
 
 /**
- * Handle one inbound `[space, message]`. Returns once the immediate acknowledgement is sent; the
- * cut itself continues in the background and replies into the space when it is done.
+ * Handle one received message. Returns once the immediate acknowledgement is sent; the cut itself
+ * continues in the background and replies into the space when it is done.
  */
-export async function handleInbound(
-  space: Sendable,
-  message: Pick<Message, "id" | "content" | "sender" | "direction" | "platform">,
-  deps: HandlerDeps = defaultDeps,
-  builders?: Builders,
-): Promise<void> {
-  if (message.direction === "outbound") return;
+export async function handleInbound(chat: Chat, message: InboundMessage, deps: HandlerDeps): Promise<void> {
+  if (message.status !== "received") return; // our own dispatched/delivered echoes
   if (!firstTime(`${message.platform}:${message.id}`)) return;
 
-  const key = `${space.__platform}:${space.id}`;
+  const key = `${chat.platform}:${chat.spaceId}`;
   const s = session(key);
-  const { texts, attachments, other } = flattenContent(message.content);
+  const { texts, attachmentIds, other } = flattenContent(message.content);
+  const requester = message.sentBy.handle ?? message.sentBy.id;
+
+  const attachments: InboundAttachment[] = [];
+  for (const id of attachmentIds) {
+    try {
+      attachments.push(await deps.resolveAttachment(id));
+    } catch (err) {
+      deps.log(`could not resolve attachment ${id}:`, err);
+    }
+  }
   const footage = attachments.filter(isFootage);
-  const requester = message.sender?.id;
 
   if (texts.length === 0 && footage.length === 0) {
-    // A reaction, a sticker, a contact card: nothing to cut. Only speak when they sent a file we cannot use.
-    if (attachments.length > 0 || other.includes("attachment")) await say(space, REPLIES.unsupported, deps.log);
+    // A read receipt, a typing update, a sticker: nothing to cut. Only speak when they sent a file we cannot use.
+    if (attachments.length > 0 || attachmentIds.length > 0) await say(chat, REPLIES.unsupported, deps.log);
+    else void other;
     return;
   }
 
   if (s.activeRunId) {
-    await say(space, REPLIES.busy, deps.log);
+    await say(chat, REPLIES.busy, deps.log);
     return;
   }
 
@@ -302,7 +341,7 @@ export async function handleInbound(
 
   // Text with no clips pending and a delivered cut behind us: a director's note.
   if (text && footage.length === 0 && s.clips.length === 0 && s.lastRunId) {
-    await revise(space, s, text, requester, deps, builders);
+    await revise(chat, s, text, requester, deps);
     return;
   }
 
@@ -310,19 +349,19 @@ export async function handleInbound(
 
   if (s.clips.length > 0 && s.brief) {
     // Both halves are here. Give the platform a moment to deliver the rest of a multi-clip send.
-    schedule(space, s, requester, deps, builders);
+    schedule(chat, s, requester, deps);
     return;
   }
   if (s.clips.length > 0) {
-    await say(space, REPLIES.gotClips(s.clips.length), deps.log);
+    await say(chat, REPLIES.gotClips(s.clips.length), deps.log);
     return;
   }
   // Text only, nothing delivered yet: either a brief ahead of the clips, or a greeting.
   if (looksLikeBrief(text)) {
-    await say(space, REPLIES.gotBrief, deps.log);
+    await say(chat, REPLIES.gotBrief, deps.log);
   } else {
     s.brief = "";
-    await say(space, REPLIES.help, deps.log);
+    await say(chat, REPLIES.help, deps.log);
   }
 }
 
@@ -333,99 +372,103 @@ export function looksLikeBrief(text: string): boolean {
   return !/^(hi|hey|hello|yo|sup|help|start|hola|test|\?+)[\s!.?]*$/i.test(text);
 }
 
-function schedule(space: Sendable, s: Session, requester: string | undefined, deps: HandlerDeps, builders?: Builders): void {
+function schedule(chat: Chat, s: Session, requester: string | undefined, deps: HandlerDeps): void {
   if (s.timer) clearTimeout(s.timer);
   s.timer = setTimeout(() => {
     s.timer = null;
-    void cut(space, s, requester, deps, builders);
+    void cut(chat, s, requester, deps);
   }, deps.settleMs);
 }
 
-async function cut(space: Sendable, s: Session, requester: string | undefined, deps: HandlerDeps, builders?: Builders): Promise<void> {
+async function cut(chat: Chat, s: Session, requester: string | undefined, deps: HandlerDeps): Promise<void> {
   const clips = s.clips.splice(0);
   const brief = s.brief.slice(0, BRIEF_MAX_CHARS);
   s.brief = "";
   if (clips.length === 0 || !brief) return;
 
-  await typing(space, true);
+  await typing(chat, true);
   let run: Run;
   try {
     const files: File[] = [];
     for (const c of clips) files.push(new File([new Uint8Array(await c.read())], c.name, { type: c.mimeType }));
-    run = await deps.createRun(brief, files, { source: space.__platform, requester });
+    run = await deps.createRun(brief, files, { source: chat.platform, requester });
   } catch (err) {
-    await typing(space, false);
+    await typing(chat, false);
     if (err instanceof UploadRejected) {
-      await say(space, REPLIES.rejected(err.message), deps.log);
+      await say(chat, REPLIES.rejected(err.message), deps.log);
     } else {
       deps.log("createRun failed:", err);
-      await say(space, REPLIES.failed(err instanceof Error ? err.message : String(err)), deps.log);
+      await say(chat, REPLIES.failed(err instanceof Error ? err.message : String(err)), deps.log);
     }
     return;
   }
   s.activeRunId = run.id;
-  deps.log(`run ${run.id} started from ${space.__platform}:${space.id} (${clips.length} clips)`);
-  await say(space, REPLIES.starting(clips.length, brief), deps.log);
-  await deliver(space, s, run.id, deps, builders);
+  deps.log(`run ${run.id} started from ${chat.platform}:${chat.spaceId} (${clips.length} clips)`);
+  await say(chat, REPLIES.starting(clips.length, brief), deps.log);
+  await deliver(chat, s, run.id, deps);
 }
 
-async function revise(space: Sendable, s: Session, note: string, requester: string | undefined, deps: HandlerDeps, builders?: Builders): Promise<void> {
+async function revise(chat: Chat, s: Session, note: string, requester: string | undefined, deps: HandlerDeps): Promise<void> {
   const run = s.lastRunId ? await deps.loadRun(s.lastRunId) : null;
   if (!run) {
     s.lastRunId = null;
     s.brief = note;
-    await say(space, REPLIES.gotBrief, deps.log);
+    await say(chat, REPLIES.gotBrief, deps.log);
     return;
   }
   const blocker = reviseBlocker(run);
   if (blocker) {
-    await say(space, REPLIES.busy, deps.log);
+    await say(chat, REPLIES.busy, deps.log);
     return;
   }
   const trimmed = note.slice(0, NOTE_MAX_CHARS);
   s.activeRunId = run.id;
   deps.startRevision(run, trimmed);
-  deps.log(`revision of ${run.id} from ${space.__platform}:${space.id}: ${trimmed}`);
-  await say(space, REPLIES.revising(trimmed), deps.log);
-  await typing(space, true);
-  void requester;
-  await deliver(space, s, run.id, deps, builders);
+  deps.log(`revision of ${run.id} from ${chat.platform}:${chat.spaceId} (${requester ?? "unknown"}): ${trimmed}`);
+  await say(chat, REPLIES.revising(trimmed), deps.log);
+  await typing(chat, true);
+  await deliver(chat, s, run.id, deps);
 }
 
 /** Wait for the loop, then send the render (or the reason there is none). Clears the active run either way. */
-async function deliver(space: Sendable, s: Session, runId: string, deps: HandlerDeps, builders?: Builders): Promise<void> {
+async function deliver(chat: Chat, s: Session, runId: string, deps: HandlerDeps): Promise<void> {
   let run: Run;
   try {
     run = await deps.waitForRun(runId);
   } catch {
     s.activeRunId = null;
-    await typing(space, false);
-    await say(space, REPLIES.timeout, deps.log);
+    await typing(chat, false);
+    await say(chat, REPLIES.timeout, deps.log);
     return;
   }
   s.activeRunId = null;
   s.lastRunId = run.id;
-  await typing(space, false);
+  await typing(chat, false);
 
   if (run.status === "error" && run.iterations.length === 0) {
-    await say(space, REPLIES.failed(run.error || "unknown error"), deps.log);
+    await say(chat, REPLIES.failed(run.error || "unknown error"), deps.log);
     return;
   }
   const render = await deps.renderFor(run);
   if (!render) {
-    await say(space, REPLIES.failed(run.error || "the render is missing"), deps.log);
+    await say(chat, REPLIES.failed(run.error || "the render is missing"), deps.log);
     return;
   }
-  if (render.size > SPECTRUM_MAX_ATTACHMENT_BYTES || !builders) {
-    await say(space, `${REPLIES.done(run)} ${REPLIES.tooBig(run)}`.trim(), deps.log);
+  if (render.size > PHOTON_MAX_ATTACHMENT_BYTES) {
+    await say(chat, `${REPLIES.done(run)} ${REPLIES.tooBig(run)}`.trim(), deps.log);
+    return;
+  }
+  if (!chat.canSendVideo) {
+    // Beta iMessage: text and images only. The summary carries the link.
+    await say(chat, `${REPLIES.done(run)} ${PUBLIC_URL ? "" : REPLIES.linkOnly(run)}`.trim(), deps.log);
     return;
   }
   try {
-    const name = `framecut-${run.id}.mp4`;
-    await space.send(builders.attachment(render.file, { mimeType: "video/mp4", name }));
-    await say(space, REPLIES.done(run), deps.log);
+    await chat.sendFile(render.file, { name: `polishedcut-${run.id}.mp4`, mimeType: "video/mp4" });
   } catch (err) {
-    deps.log(`could not attach render for ${run.id}:`, err);
-    await say(space, `${REPLIES.done(run)} ${REPLIES.tooBig(run)}`.trim(), deps.log);
+    deps.log(`could not attach the render for ${run.id} on ${chat.platform}; sending the link instead:`, err);
+    await say(chat, `${REPLIES.done(run)} ${PUBLIC_URL ? "" : REPLIES.linkOnly(run)}`.trim(), deps.log);
+    return;
   }
+  await say(chat, REPLIES.done(run), deps.log);
 }

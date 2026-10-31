@@ -52,17 +52,24 @@ Read this before touching the repo. Each note below cost someone time today.
   `applyMusicPatch` before the cut/caption patches; `lib/patch.ts` also handles it so any other
   `applyPatches` caller gets the same result.
 
-## Chat adapter (Photon Spectrum)
+## Chat adapter (Photon Beta 2.0)
 
 - Run creation lives in `lib/intake.ts` (`createRun`). `POST /api/runs` and the chat adapter both call
   it; change intake rules there, not in the route.
-- `lib/spectrum-handler.ts` has no runtime dependency on the SDK (types only). Keep it that way so
-  `tests/spectrum.test.ts` runs without credentials or gRPC. The SDK is loaded lazily in
-  `lib/spectrum.ts`, and the packages are in `serverExternalPackages` (`next.config.ts`).
-- The adapter boots from `instrumentation.ts` only when `SPECTRUM_PROJECT_ID`/`_SECRET` are set.
-  In stream mode it holds a connection open from the dev server; restarting `next dev` drops the
-  per-chat state (pending clips/brief), though runs themselves resume as usual.
+- The integration targets Photon's **Beta** platform (app.beta.photon.codes): `pho_prj_…` project id,
+  `pho_sk_…` API key, HTTP API at api.photon.codes/v1, Socket.IO events. It is not the Stable
+  `spectrum-ts` SDK; do not reintroduce it. Contracts: docs/PHOTON.md, api.photon.codes/openapi.json.
+- `lib/photon-handler.ts` has no network code (types only from `@photon-ai/api`). Keep it that way so
+  `tests/photon.test.ts` runs without credentials. HTTP, Socket.IO and webhook verification live in
+  `lib/photon.ts`; `socket.io-client` is in `serverExternalPackages` (`next.config.ts`).
+- The adapter boots from `instrumentation.ts` only when `PHOTON_PROJECT_ID`/`PHOTON_API_KEY` are set.
+  In stream mode it holds a Socket.IO connection open from the dev server and checkpoints the replay
+  cursor in `PHOTON_CURSOR_FILE`; restarting `next dev` drops the per-chat state (pending clips/brief),
+  though runs themselves resume as usual.
+- Beta iMessage carries text and images only; the handler sends the mp4 as an attachment on Telegram
+  / WhatsApp and as a `PUBLIC_URL/s/<id>` link on iMessage (`Chat.canSendVideo`).
 - Chat replies are plain text (iMessage/WhatsApp render no markdown). Strings live in `REPLIES`.
+- `node scripts/photon-doctor.mjs` checks credentials, lines and recent messages with plain fetch.
 
 ## Lovable / dashboard port notes
 

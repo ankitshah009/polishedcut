@@ -146,28 +146,33 @@ export function runDir(id: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Chat front door: Photon Spectrum (lib/spectrum.ts, lib/spectrum-handler.ts; see docs/SPECTRUM.md)
+// Chat front door: Photon Beta (2.0) (lib/photon.ts, lib/photon-handler.ts; see docs/PHOTON.md)
+//
+// This targets the Beta platform at app.beta.photon.codes: project ids `pho_prj_…`, project API keys
+// `pho_sk_…`, the HTTP API at https://api.photon.codes/v1 and Socket.IO event delivery. It is not the
+// Stable `spectrum-ts` SDK (project id + secret over gRPC); the two systems do not share credentials.
 
-/** Spectrum Cloud project credentials (app.photon.codes -> Settings). Both set -> the adapter boots with the app. */
-export const SPECTRUM_PROJECT_ID = process.env.SPECTRUM_PROJECT_ID?.trim() ?? "";
-export const SPECTRUM_PROJECT_SECRET = process.env.SPECTRUM_PROJECT_SECRET?.trim() ?? "";
-/** Signing secret for POST /api/spectrum/webhook (native Spectrum webhooks); unused in stream mode. */
-export const SPECTRUM_WEBHOOK_SECRET = process.env.SPECTRUM_WEBHOOK_SECRET?.trim() ?? "";
-/** Platforms to connect, comma separated: imessage, telegram, whatsapp-business, slack. */
-export const SPECTRUM_PLATFORMS = (process.env.SPECTRUM_PLATFORMS ?? "imessage")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
-/** "stream" keeps a long-lived connection open from this process (no public URL needed); "webhook" relies on the route. */
-export const SPECTRUM_MODE = process.env.SPECTRUM_MODE?.trim().toLowerCase() === "webhook" ? "webhook" : "stream";
+/** Beta project id (`pho_prj_…`, Settings in the Beta dashboard) and a project API key (`pho_sk_…`, API keys). */
+export const PHOTON_PROJECT_ID = process.env.PHOTON_PROJECT_ID?.trim() ?? "";
+export const PHOTON_API_KEY = (process.env.PHOTON_API_KEY ?? process.env.PHOTON_SPECTRUM_API_KEY ?? "").trim();
+/** HTTP API origin; the documented default. The Socket.IO event stream hangs off the same origin. */
+export const PHOTON_API_URL = (process.env.PHOTON_API_URL ?? "https://api.photon.codes").trim().replace(/\/+$/, "");
+/** Optional event-contract date pinned on the Socket.IO subscription (`apiVersion`); unset -> server default. */
+export const PHOTON_API_VERSION = process.env.PHOTON_API_VERSION?.trim() ?? "";
+/** Signing secret from `createWebhookDestination`, for POST /api/photon/webhook; unused in stream mode. */
+export const PHOTON_WEBHOOK_SECRET = process.env.PHOTON_WEBHOOK_SECRET?.trim() ?? "";
+/** "stream" holds a Socket.IO connection open from this process (no public URL needed); "webhook" relies on the route. */
+export const PHOTON_MODE = process.env.PHOTON_MODE?.trim().toLowerCase() === "webhook" ? "webhook" : "stream";
 /** Set to 0/false to keep the adapter from booting even when credentials are present. */
-export const SPECTRUM_ENABLED = !envFlagIsFalse("SPECTRUM_ENABLED") && SPECTRUM_PROJECT_ID !== "" && SPECTRUM_PROJECT_SECRET !== "";
+export const PHOTON_ENABLED = !envFlagIsFalse("PHOTON_ENABLED") && PHOTON_PROJECT_ID !== "" && PHOTON_API_KEY !== "";
 /** Clips and the brief rarely land in one message; wait this long after the last one before starting the cut. */
-export const SPECTRUM_SETTLE_MS = envInt("SPECTRUM_SETTLE_MS", 2500, 0);
+export const PHOTON_SETTLE_MS = envInt("PHOTON_SETTLE_MS", 2500, 0);
 /** Give up waiting for a cut (and say so in the chat) after this long. */
-export const SPECTRUM_RUN_TIMEOUT_MS = envInt("SPECTRUM_RUN_TIMEOUT_MS", 30 * 60 * 1000, 10_000);
-/** A render larger than this is not attached (iMessage rejects very large files); the link is sent instead. */
-export const SPECTRUM_MAX_ATTACHMENT_BYTES = envInt("SPECTRUM_MAX_ATTACHMENT_BYTES", 95 * 1024 * 1024, 1024 * 1024);
+export const PHOTON_RUN_TIMEOUT_MS = envInt("PHOTON_RUN_TIMEOUT_MS", 30 * 60 * 1000, 10_000);
+/** A render larger than this is not attached; the link is sent instead. */
+export const PHOTON_MAX_ATTACHMENT_BYTES = envInt("PHOTON_MAX_ATTACHMENT_BYTES", 95 * 1024 * 1024, 1024 * 1024);
+/** Where the Socket.IO replay cursor is checkpointed between restarts. */
+export const PHOTON_CURSOR_FILE = path.resolve(/*turbopackIgnore: true*/ process.env.PHOTON_CURSOR_FILE ?? path.join(RUNS_DIR, ".photon-cursor.json"));
 /** Public origin of this app, used for the "watch every version" link in chat replies (e.g. https://framecut.example). */
 export const PUBLIC_URL = (process.env.PUBLIC_URL ?? process.env.NEXT_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
 

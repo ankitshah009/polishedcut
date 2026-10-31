@@ -23,7 +23,7 @@ import type { Run, SourceClip } from "./schema";
 
 /**
  * One front door for every way footage reaches the editor: the browser upload (POST /api/runs) and
- * the chat adapter (lib/spectrum-handler.ts) both call `createRun`, so a clip texted over iMessage
+ * the chat adapter (lib/photon-handler.ts) both call `createRun`, so a clip texted over iMessage
  * is validated, probed, registered and cut exactly like one dropped on the dashboard.
  */
 

@@ -13,10 +13,11 @@ this repo was written on the day; see the last section.
 
 ## Text it a clip
 
-Framecut also answers on iMessage, WhatsApp, Telegram and Slack through [Photon Spectrum](https://photon.codes):
-text the agent's number a clip and a one-line brief, and the finished cut comes back in the same chat.
-Reply with a note ("tighter, lose the second shot") and it revises. Same pipeline, same run on the
-dashboard; see [docs/SPECTRUM.md](docs/SPECTRUM.md) for the ten-minute setup.
+PolishedCut also answers on iMessage, Telegram and WhatsApp Business through [Photon](https://app.beta.photon.codes)
+(the Beta 2.0 platform): text the agent's number a clip and a one-line brief, and the finished cut comes
+back in the same chat (as a link on iMessage, which carries text and images only on Beta). Reply with a
+note ("tighter, lose the second shot") and it revises. Same pipeline, same run on the dashboard; see
+[docs/PHOTON.md](docs/PHOTON.md) for the ten-minute setup.
 
 ## Who this is for
 

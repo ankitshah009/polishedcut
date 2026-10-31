@@ -28,7 +28,7 @@ export async function GET() {
  * MAX_TOTAL_SECONDS, 413 over MAX_UPLOAD_BYTES, 500 when a clip could not be written.
  * Any container, codec, frame rate, bit depth or orientation ffmpeg can decode is accepted; the
  * delivery size follows the footage and the brief (chooseOutput), and photos become clips at that size.
- * The work itself is lib/intake.ts `createRun`, shared with the chat adapter (lib/spectrum-handler.ts).
+ * The work itself is lib/intake.ts `createRun`, shared with the chat adapter (lib/photon-handler.ts).
  */
 export async function POST(request: Request) {
   // Reject before buffering the body when the browser already tells us it is too big.
