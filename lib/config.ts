@@ -66,6 +66,27 @@ export const MODEL_PROVIDER: ModelProvider = (() => {
   if (NEBULA_BASE_URL && NEBULA_API_KEY) return "nebula";
   return GEMINI_KEY_PRESENT ? "gemini" : "local";
 })();
+// ---------------------------------------------------------------------------
+// Frame analysis (lib/frame-analyst.ts)
+//
+// Under the local editor, per-clip analysis (word-timed transcript, sound regions, shot boundaries) is
+// either computed on this machine (whisper.cpp + ffmpeg) or fetched from the Nebula Frame Analyst
+// webhook, so the work bills Nebula credits instead of running here. FRAME_ANALYSIS picks; unset, the
+// webhook is used whenever NEBULA_FRAME_WEBHOOK_URL is set. With the webhook configured there is no
+// silent fallback to whisper/ffmpeg: a failed call is reported, not papered over.
+export type FrameAnalysisProvider = "local" | "nebula";
+export const FRAME_ANALYST_URL = (process.env.NEBULA_FRAME_WEBHOOK_URL ?? "").trim();
+export const FRAME_ANALYST_SECRET = (process.env.NEBULA_FRAME_WEBHOOK_SECRET ?? "").trim();
+export const FRAME_ANALYSIS: FrameAnalysisProvider = (() => {
+  const v = process.env.FRAME_ANALYSIS?.trim().toLowerCase();
+  if (v === "nebula" || v === "local") return v;
+  return FRAME_ANALYST_URL ? "nebula" : "local";
+})();
+/** Wall-clock budget for one clip's analysis round trip, polling included. */
+export const FRAME_ANALYST_TIMEOUT_MS = envInt("NEBULA_FRAME_TIMEOUT_MS", 10 * 60 * 1000);
+/** Pause between polls when the webhook answers 202 with a status URL. */
+export const FRAME_ANALYST_POLL_MS = envInt("NEBULA_FRAME_POLL_MS", 3000, 100);
+
 /** whisper.cpp model for the local editor's transcripts; `whisper-cli` (brew install whisper-cpp) must be on PATH. */
 export const WHISPER_MODEL = path.resolve(/*turbopackIgnore: true*/ process.env.WHISPER_MODEL ?? "models/ggml-base.en.bin");
 export const WHISPER_BIN = process.env.WHISPER_BIN?.trim() || "whisper-cli";
