@@ -226,7 +226,10 @@ export interface PhotonEvent {
 export function messageIdFromEvent(event: PhotonEvent): string | null {
   if (!/^message\b/i.test(event.type)) return null;
   const data = (event.data ?? event.payload ?? event.object ?? event) as Record<string, unknown>;
+  // Beta events (apiVersion 2026-07-01) carry the Message as `data.object`; the other shapes are kept
+  // for older payloads and webhooks.
   const candidates = [
+    (data.object as { id?: unknown } | undefined)?.id,
     (data.message as { id?: unknown } | undefined)?.id,
     data.messageId,
     data.id !== event.id ? data.id : undefined,
@@ -237,9 +240,13 @@ export function messageIdFromEvent(event: PhotonEvent): string | null {
 
 export async function handlePhotonEvent(event: PhotonEvent, deps: HandlerDeps = liveDeps): Promise<void> {
   const messageId = messageIdFromEvent(event);
-  if (!messageId) return;
+  if (!messageId) {
+    // A message event we cannot place is a contract change, not noise: say so instead of advancing past it quietly.
+    if (/^message\b/i.test(event.type)) console.warn(`[photon] ${event.type} ${event.id} carries no message id; payload keys: ${Object.keys((event.data as object) ?? {}).join(",")}`);
+    return;
+  }
   const data = (event.data ?? {}) as Record<string, unknown>;
-  const embedded = (data.message ?? data) as Record<string, unknown>;
+  const embedded = (data.object ?? data.message ?? data) as Record<string, unknown>;
   // Use the embedded message when the event carries a full one; otherwise read it back.
   const full = embedded && embedded.content && embedded.space && embedded.sentBy ? embedded : await getMessage(messageId);
   await dispatchMessage(full, deps);

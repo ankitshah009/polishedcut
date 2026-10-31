@@ -136,6 +136,8 @@ describe("toInbound / messageIdFromEvent", () => {
     expect(toInbound({ id: "x" })).toBeNull();
   });
   it("finds the message id in the common event layouts and ignores non-message events", () => {
+    // Beta 2026-07-01 contract: the Message rides in data.object (see webhooks/event-types/message.received/schema).
+    expect(messageIdFromEvent({ id: "evt_0", type: "message.received", data: { object: { id: "msg_0", status: "received" }, projectId: "pho_prj_x" } })).toBe("msg_0");
     expect(messageIdFromEvent({ id: "evt_1", type: "message.received", data: { message: { id: "msg_a" } } })).toBe("msg_a");
     expect(messageIdFromEvent({ id: "evt_2", type: "message.received", data: { messageId: "msg_b" } })).toBe("msg_b");
     expect(messageIdFromEvent({ id: "evt_3", type: "message.received", data: { id: "msg_c", content: {} } })).toBe("msg_c");
