@@ -1,0 +1,15 @@
+[project]
+name = "gemini-editor"
+version = "0.1.0"
+description = "Self-correcting video editor: Gemini 4 Argon cuts, renders, watches, critiques and fixes."
+requires-python = ">=3.11"
+dependencies = ["google-genai>=2.3.0", "pydantic>=2.7", "fastapi>=0.115", "uvicorn>=0.30", "python-multipart>=0.0.9"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["editor"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

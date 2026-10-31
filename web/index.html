@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Argon Cut</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <span class="logo">Argon<b>Cut</b></span>
+  <span id="status" class="status idle">Drop clips, write a brief, cut.</span>
+</header>
+<div class="layout">
+  <aside class="side">
+    <label id="drop" class="drop" for="files">
+      <input id="files" type="file" accept="video/*" multiple hidden>
+      <strong>Drop clips here</strong><span>or click to choose</span>
+    </label>
+    <ul id="cliplist" class="cliplist"></ul>
+    <label class="lbl" for="brief">Brief</label>
+    <textarea id="brief" rows="6" placeholder="30s recap of the keynote. Open on the product reveal, captions on, end on applause."></textarea>
+    <button id="go" class="go" disabled>Cut it</button>
+    <details class="past"><summary>Past runs</summary><ul id="runs"></ul></details>
+  </aside>
+  <main class="main">
+    <div class="mainbar">
+      <h1 id="title">No cut yet</h1>
+      <label class="toggle"><input id="compare" type="checkbox"> v1 vs final</label>
+    </div>
+    <section id="strip" class="strip">
+      <p class="empty">Each version Argon renders shows up here, with what it saw and what it fixed.</p>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

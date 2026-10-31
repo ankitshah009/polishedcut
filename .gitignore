@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+/runs/
+/footage/
+.env
+*.mp4
+
+# Next.js app
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.env*.local
+.DS_Store
