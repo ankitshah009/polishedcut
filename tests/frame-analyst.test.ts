@@ -89,6 +89,15 @@ describe("analyzeClip", () => {
     const noPoll = vi.fn(async () => json({ accepted: true }, 202));
     await expect(analyzeClip(clip, { url: "https://nebula.example/hook", fetch: noPoll as unknown as typeof globalThis.fetch, publicUrl, runsDir, sleep })).rejects.toThrow(/without a status_url/);
   });
+
+  it("names the webhook when the network call itself fails", async () => {
+    const down = vi.fn(async () => {
+      throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:3799") });
+    });
+    await expect(analyzeClip(clip, { url: "http://127.0.0.1:3799/analyze", fetch: down as unknown as typeof globalThis.fetch, publicUrl, runsDir, sleep })).rejects.toThrow(
+      /webhook http:\/\/127\.0\.0\.1:3799\/analyze unreachable: connect ECONNREFUSED/,
+    );
+  });
 });
 
 describe("local editor with an injected frame analyzer", () => {
