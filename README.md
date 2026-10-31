@@ -398,6 +398,11 @@ To move the cut to a Nebula-hosted Gemini model, change only env: `NEBULA_BASE_U
 the Gemini REST API including the Files API, because drafts and critiques are made from the uploaded video.
 `GET /api/health` reports which provider is live.
 
+Before the Nebula job is reachable, `npx tsx scripts/frame-analyst-stub.ts --port 3777 --secret s3cret` answers the
+same webhook contract locally (whisper.cpp + ffmpeg over HTTP, 202 + poll), so a full cut can be driven through
+`FRAME_ANALYSIS=nebula` end to end: point `NEBULA_FRAME_WEBHOOK_URL` at it and `PUBLIC_URL` at a server that serves
+`runs/`. It is a stand-in, not Nebula; nothing in it bills credits.
+
 ## Setup
 
 Requires Node 22 and ffmpeg on your PATH.

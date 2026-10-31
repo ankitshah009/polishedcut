@@ -25,7 +25,9 @@
  *     "summary": "one line about the footage"
  *   }
  *
- * No network code beyond the injected `fetch`, so tests run without credentials.
+ * No network code beyond the injected `fetch`, so tests run without credentials. `scripts/frame-analyst-stub.ts`
+ * is a local stand-in that answers this contract (whisper.cpp + ffmpeg over HTTP) for end-to-end runs
+ * before the Nebula job is reachable.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -225,7 +227,12 @@ export async function analyzeClip(clip: ClipToAnalyze, opts: FrameAnalystOptions
   const deadline = t0 + timeoutMs;
   const signalFor = () => AbortSignal.timeout(Math.max(1000, Math.ceil(deadline - performance.now())));
 
-  let res = await doFetch(url, { method: "POST", headers, body: JSON.stringify(requestBody(clip, clipUrl)), signal: signalFor() });
+  // A network failure is a bare "TypeError: fetch failed" from undici; name the webhook so the run's warning does.
+  const unreachable = (target: string) => (err: unknown) => {
+    const cause = (err as { cause?: { message?: string } })?.cause?.message;
+    throw new Error(`Frame Analyst webhook ${target} unreachable: ${cause ?? (err instanceof Error ? err.message : String(err))}`);
+  };
+  let res = await doFetch(url, { method: "POST", headers, body: JSON.stringify(requestBody(clip, clipUrl)), signal: signalFor() }).catch(unreachable(url));
   let body = await readBody(res);
   if (!res.ok && res.status !== 202) {
     throw new Error(`Frame Analyst webhook ${res.status}: ${typeof body === "string" ? body.slice(0, 300) : JSON.stringify(body)?.slice(0, 300)}`);
@@ -239,7 +246,7 @@ export async function analyzeClip(clip: ClipToAnalyze, opts: FrameAnalystOptions
   while (pollUrl) {
     if (performance.now() > deadline) throw new Error(`Frame Analyst did not finish ${clip.clipId} within ${Math.round(timeoutMs / 1000)}s`);
     await sleep(pollMs);
-    res = await doFetch(pollUrl, { method: "GET", headers: { accept: headers.accept, ...(secret ? { authorization: headers.authorization } : {}) }, signal: signalFor() });
+    res = await doFetch(pollUrl, { method: "GET", headers: { accept: headers.accept, ...(secret ? { authorization: headers.authorization } : {}) }, signal: signalFor() }).catch(unreachable(pollUrl));
     body = await readBody(res);
     if (res.status === 202 || isPending(body)) {
       pollUrl = statusUrlOf(body, pollUrl) ?? pollUrl;
