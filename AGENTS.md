@@ -12,6 +12,12 @@ Read this before touching the repo. Each note below cost someone time today.
   `queued | drafting | rendering | critiquing` first.
 - **The app owns port 3000.** Do not start anything else there and do not `next build` in the
   checkout while the dev server runs: both write to `.next/` and the running server breaks.
+- **The live site is `next start -p 3100` behind a tunnel, supervised by launchd** (`scripts/live-tunnel.sh`,
+  agent `ai.polishedcut.live`, KeepAlive). It picks cloudflared when TCP 7844 is reachable and falls back to
+  `ssh -R` to localhost.run when a VPN blocks it, and redeploys the polishedcut.vercel.app proxy whenever the
+  hostname changes or the live domain stops answering. `live-tunnel.sh status` shows the state; `stop` also
+  kills the server, so never run it with a run in flight. The Vercel project's Ignored Build Step is `exit 0`:
+  pushes to main must not build there, the proxy is the only deployment.
 - **One `npm install` at a time.** Parallel installs corrupt `node_modules` and `package-lock.json`.
   If you need a package, say so and let one person add it.
 - **Tests must not need a key or the network.** Every Gemini-facing module takes an injected client
