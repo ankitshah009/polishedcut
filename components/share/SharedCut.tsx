@@ -113,7 +113,7 @@ export function SharedCut({ run }: { run: Run }) {
           <div className="mt-8 flex flex-wrap items-center gap-3 border-t pt-6">
             <a
               href={videoUrl(run.id, last.video)}
-              download={`polishedtake-${run.id}-v${last.n}.mp4`}
+              download={`polishedcut-${run.id}-v${last.n}.mp4`}
               className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-tile hover:brightness-105"
             >
               <Download className="size-4" /> Download final (v{last.n})
@@ -123,7 +123,7 @@ export function SharedCut({ run }: { run: Run }) {
                 <a
                   key={v.n}
                   href={videoUrl(run.id, v.video)}
-                  download={`polishedtake-${run.id}-v${v.n}.mp4`}
+                  download={`polishedcut-${run.id}-v${v.n}.mp4`}
                   className="inline-flex h-9 items-center gap-2 rounded-lg border bg-card px-4 text-sm font-medium hover:bg-muted"
                 >
                   <Download className="size-4" /> v{v.n}
@@ -139,7 +139,7 @@ export function SharedCut({ run }: { run: Run }) {
       <footer className="mt-4 border-t py-6 text-center text-xs text-muted-foreground">
         Made with{" "}
         <Link href="/" className="font-medium text-foreground">
-          PolishedTake
+          PolishedCut
         </Link>
       </footer>
     </div>

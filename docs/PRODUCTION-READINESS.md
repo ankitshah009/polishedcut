@@ -1,6 +1,6 @@
 # Production readiness
 
-An honest review of where PolishedTake stands after the hackathon day (Oct 25, 2026), what is safe to demo, and what must change before charging customers. It combines an independent architecture review (run through Lovable's agent in plan mode against the architecture description, without access to this repo) with what we verified ourselves.
+An honest review of where PolishedCut stands after the hackathon day (Oct 25, 2026), what is safe to demo, and what must change before charging customers. It combines an independent architecture review (run through Lovable's agent in plan mode against the architecture description, without access to this repo) with what we verified ourselves.
 
 ## What is solid today
 

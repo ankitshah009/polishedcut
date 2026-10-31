@@ -79,7 +79,7 @@ status-and-notes conversation, and all of the heavy reasoning already happens in
 
 ## What Argon knows
 
-The system instruction is built from `run.json` only: product name ("PolishedTake"), the brief, the
+The system instruction is built from `run.json` only: product name ("PolishedCut"), the brief, the
 status, the latest version's score (passed/total checks), each failed check with its output-timeline
 timestamp and note, the fixes applied between versions (patch descriptions and director's notes),
 clip count and warnings. The rules say to speak in one or two sentences, to narrate from those facts

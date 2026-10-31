@@ -7,7 +7,7 @@ import { Behavior, Modality, type FunctionDeclaration, type LiveConnectConfig } 
 import { checkLabel, describePatch, formatTime } from "./format";
 import type { Iteration, Run } from "./schema";
 
-export const PRODUCT_NAME = "PolishedTake";
+export const PRODUCT_NAME = "PolishedCut";
 export const LIVE_MODEL = process.env.NEXT_PUBLIC_LIVE_MODEL ?? "gemini-3.8-live";
 /** How long a freshly issued token may open a session and keep talking. */
 export const TOKEN_TTL_MS = 5 * 60 * 1000;

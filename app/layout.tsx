@@ -23,7 +23,7 @@ const mono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PolishedTake",
+  title: "PolishedCut",
   description: "Raw footage and a one-line brief in. A self-correcting cut out.",
 };
 

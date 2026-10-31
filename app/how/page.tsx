@@ -2,7 +2,7 @@ import Link from "next/link";
 import PipelineExplainer from "@/components/how/PipelineExplainer";
 import { stackStatus } from "@/lib/stack";
 
-export const metadata = { title: "How PolishedTake works" };
+export const metadata = { title: "How PolishedCut works" };
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

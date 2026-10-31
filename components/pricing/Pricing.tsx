@@ -150,7 +150,7 @@ export function Pricing() {
         <Faq />
 
         <footer className="mt-16 flex flex-wrap items-center justify-between gap-3 border-t pt-6 text-sm text-muted-foreground">
-          <span>PolishedTake bills in USD. Model rates are Google’s list prices and can change.</span>
+          <span>PolishedCut bills in USD. Model rates are Google’s list prices and can change.</span>
           <a href={billingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-foreground hover:underline">
             Check balance in AI Studio <ArrowUpRight className="size-3.5" />
           </a>
