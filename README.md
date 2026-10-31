@@ -8,8 +8,7 @@ render**, grades it with timestamped pass/fail checks, patches the EDL and re-re
 versions, or until every check passes. You see v1, v2, v3 side by side with the critique behind each
 change, streamed live, and you decide what to export.
 
-Built for the Gemini 4 Argon SF Hackathon (Problem Statement Two: More Dimensions). Everything in
-this repo was written on the day; see the last section.
+Built for the Gemini 4 Argon SF Hackathon (Problem Statement Two: More Dimensions).
 
 ## Text it a clip
 
@@ -457,11 +456,6 @@ uploaded for the model to watch.
 
 The original FastAPI/Python editor lives in `editor/` and `web/` (with `tests/*.py`). It is kept for
 reference; the Next.js app is the supported path.
-
-## Built during the hackathon (Oct 25, 2026)
-
-Everything in this repository was written today, starting from an empty folder. No code was
-carried over from other projects.
 
 ## More docs
 
