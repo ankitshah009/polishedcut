@@ -121,3 +121,15 @@ instruction is fixed at connect time; narrate mode carries later changes into th
   (exact timecodes of every cut) is not in the instruction, only failed-check timestamps and fixes.
 - Ephemeral tokens are a `v1alpha` feature of the Gemini Developer API and are not available on
   Vertex AI.
+
+## Serving polishedcut.vercel.app from the Mac (demo topology, 2026-10-31)
+
+Vercel cannot run the pipeline: no ffmpeg, a read-only filesystem, request-scoped functions and no
+process to hold the Photon Socket.IO stream. So production is `next start` on the Mac behind an SSH
+reverse tunnel, and the Vercel project `polishedcut` holds a tiny deployment whose only content is a
+`vercel.json` rewriting every path to that tunnel. `scripts/live-tunnel.sh` does all of it (build,
+server on :3100, serveo.net tunnel, proxy deploy); `status` and `stop` are the other verbs. Redeploying
+the Next app itself to Vercel (`vercel --prod` from the repo root) replaces the proxy; rerun the script
+to put it back. Cloudflare quick tunnels need outbound port 7844, which is blocked on some networks;
+serveo uses port 22. Uploads through the proxy are subject to the tunnel's limits; the demo clips and
+the Photon path never traverse it.

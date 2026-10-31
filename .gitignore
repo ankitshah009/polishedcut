@@ -14,3 +14,10 @@ next-env.d.ts
 .env*.local
 .DS_Store
 .vercel
+
+# The three bundled demo clips ship with the app ("Try the demo clips"); everything else under footage/ stays local.
+!/footage/
+/footage/*
+!/footage/demo/
+!/footage/demo/brief.txt
+!/footage/demo/0*.mp4
