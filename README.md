@@ -389,7 +389,7 @@ visible at AI Studio billing, which the usage page links to.
 | provider | what cuts | needs |
 | - | - | - |
 | `local` (default with no key) | lib/local-editor.ts: whisper.cpp word-timed transcripts, ffmpeg silence/scene detection, brief-scored speech regions picked to the brief's length, filler words cut out, captions from the words. No hosted model, no cost. | `whisper-cli` + `WHISPER_MODEL` for transcripts (without them: silence/scene regions only) |
-| `local` + `FRAME_ANALYSIS=nebula` | the same deterministic cut, but each clip's words / sound regions / shots come from the Nebula Frame Analyst webhook (lib/frame-analyst.ts) instead of whisper.cpp + ffmpeg, so analysis bills Nebula credits; ffmpeg still renders | `NEBULA_FRAME_WEBHOOK_URL` (+ `NEBULA_FRAME_WEBHOOK_SECRET`), `PUBLIC_URL` reachable from Nebula |
+| `local` + `FRAME_ANALYSIS=nebula` | the same deterministic cut, but each clip's shots / sound regions (and words, when the agent hears any) come from the Nebula Frame Analyst webhook (lib/frame-analyst.ts): the clip URL, JPEG stills and a callback URL go to the Nebula job, which acknowledges and POSTs the analysis back to `/api/frame-analysis/callback/...`, so analysis bills Nebula credits; ffmpeg still renders and whisper.cpp still transcribes when the analysis has no words | `NEBULA_FRAME_WEBHOOK_URL` + `NEBULA_FRAME_WEBHOOK_SECRET` (the job's webhook secret, sent as `X-Webhook-Secret`), `PUBLIC_URL` reachable from Nebula |
 | `gemini` | lib/gemini.ts against Google: Argon drafts and critiques from the footage itself; Flash-Lite, Nano Banana, Lyria and Omni companions | `GEMINI_API_KEY` |
 | `nebula` | the same SDK pointed at a Nebula-hosted Gemini-protocol gateway | `NEBULA_BASE_URL`, `NEBULA_API_KEY`, optional `NEBULA_MODEL` / `NEBULA_FALLBACK_MODEL` |
 
@@ -398,10 +398,12 @@ To move the cut to a Nebula-hosted Gemini model, change only env: `NEBULA_BASE_U
 the Gemini REST API including the Files API, because drafts and critiques are made from the uploaded video.
 `GET /api/health` reports which provider is live.
 
-Before the Nebula job is reachable, `npx tsx scripts/frame-analyst-stub.ts --port 3777 --secret s3cret` answers the
-same webhook contract locally (whisper.cpp + ffmpeg over HTTP, 202 + poll), so a full cut can be driven through
-`FRAME_ANALYSIS=nebula` end to end: point `NEBULA_FRAME_WEBHOOK_URL` at it and `PUBLIC_URL` at a server that serves
-`runs/`. It is a stand-in, not Nebula; nothing in it bills credits.
+Before the Nebula job is reachable, `npx tsx scripts/frame-analyst-stub.ts --port 3777 --secret s3cret --nebula`
+answers the same webhook contract locally (whisper.cpp + ffmpeg over HTTP; `--nebula` acknowledges and posts back to
+the callback URL exactly like api.nebula.gg, without it 202 + poll), so a full cut can be driven through
+`FRAME_ANALYSIS=nebula` end to end: point `NEBULA_FRAME_WEBHOOK_URL` at it and `PUBLIC_URL` at the server that serves
+`runs/` and the callback route. It is a stand-in, not Nebula; nothing in it bills credits. Each clip's evidence in
+`runs/<id>/analysis/<clip>.json` names the webhook as `source` and how the result arrived as `via`.
 
 ## Setup
 

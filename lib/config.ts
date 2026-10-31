@@ -86,6 +86,8 @@ export const FRAME_ANALYSIS: FrameAnalysisProvider = (() => {
 export const FRAME_ANALYST_TIMEOUT_MS = envInt("NEBULA_FRAME_TIMEOUT_MS", 10 * 60 * 1000);
 /** Pause between polls when the webhook answers 202 with a status URL. */
 export const FRAME_ANALYST_POLL_MS = envInt("NEBULA_FRAME_POLL_MS", 3000, 100);
+/** JPEG stills sampled evenly from each clip and listed (as URLs) in the webhook payload; 0 sends the clip URL only. */
+export const FRAME_ANALYST_FRAMES = envInt("NEBULA_FRAME_FRAMES", 8, 0);
 
 /** whisper.cpp model for the local editor's transcripts; `whisper-cli` (brew install whisper-cpp) must be on PATH. */
 export const WHISPER_MODEL = path.resolve(/*turbopackIgnore: true*/ process.env.WHISPER_MODEL ?? "models/ggml-base.en.bin");
