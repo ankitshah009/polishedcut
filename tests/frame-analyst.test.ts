@@ -5,7 +5,21 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { POST as callbackPost } from "../app/api/frame-analysis/callback/[job]/[token]/route";
-import { CallbackRegistry, analyzeClip, callbackUrlFor, callbacks, clipUrlFor, extractFrames, holdsAnalysis, parseAnalysis, unwrapResult, type FrameAnalysis } from "../lib/frame-analyst";
+import {
+  CallbackRegistry,
+  FrameAnalystError,
+  analyzeClip,
+  callbackUrlFor,
+  callbacks,
+  clipUrlFor,
+  extractFrames,
+  holdsAnalysis,
+  isFrameAnalystError,
+  parseAnalysis,
+  retryableStatus,
+  unwrapResult,
+  type FrameAnalysis,
+} from "../lib/frame-analyst";
 import { createLocalEditor } from "../lib/local-editor";
 import { makeFixtureClip } from "./fixtures";
 
@@ -189,6 +203,193 @@ describe("analyzeClip over Nebula's acknowledge-then-callback flow", () => {
 
   it("builds the callback URL under PUBLIC_URL", () => {
     expect(callbackUrlFor("abc", "def", publicUrl)).toBe(`${publicUrl}/api/frame-analysis/callback/abc/def`);
+  });
+});
+
+describe("FrameAnalystError", () => {
+  it("carries a kind and a status and is recognisable across module copies", () => {
+    const e = new FrameAnalystError("http", "Frame Analyst webhook 503: busy", { status: 503 });
+    expect(e).toBeInstanceOf(Error);
+    expect(e.name).toBe("FrameAnalystError");
+    expect(e.kind).toBe("http");
+    expect(e.status).toBe(503);
+    expect(isFrameAnalystError(e)).toBe(true);
+    expect(isFrameAnalystError(Object.assign(new Error("x"), { name: "FrameAnalystError", kind: "timeout" }))).toBe(true);
+    expect(isFrameAnalystError(new Error("Frame Analyst webhook 503: busy"))).toBe(false);
+  });
+  it("types every failure of the round trip's inputs", () => {
+    expect(() => clipUrlFor(clip.file, runsDir, "")).toThrow(expect.objectContaining({ kind: "config" }));
+    expect(() => parseAnalysis({ ok: true }, 20, "u", 1)).toThrow(expect.objectContaining({ kind: "bad_payload" }));
+    expect(() => parseAnalysis({ shots: "0-5" }, 20, "u", 1)).toThrow(expect.objectContaining({ kind: "bad_payload" }));
+  });
+  it("only ever retries 429, 408 and 5xx", () => {
+    expect([401, 403, 404, 400, 422].map(retryableStatus)).toEqual([false, false, false, false, false]);
+    expect([429, 408, 500, 502, 503, 504].map(retryableStatus)).toEqual([true, true, true, true, true, true]);
+  });
+});
+
+describe("analyzeClip retries with backoff", () => {
+  /** A fake sleep that records the waits so the backoff schedule is asserted, not timed. */
+  const recorder = () => {
+    const waits: number[] = [];
+    return { waits, sleep: async (ms: number) => void waits.push(ms) };
+  };
+  const quiet = () => vi.spyOn(console, "warn").mockImplementation(() => {});
+
+  it("retries a 503 with exponential backoff and then succeeds", async () => {
+    const warn = quiet();
+    const { waits, sleep } = recorder();
+    let calls = 0;
+    const fetch = vi.fn(async () => (++calls < 3 ? new Response("upstream busy", { status: 503 }) : json(result)));
+    const a = await analyzeClip(clip, { ...base, sleep, fetch: fetch as unknown as Fetch, retries: 3, backoffMs: 100 });
+    expect(a.via).toBe("response");
+    expect(a.words).toHaveLength(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([100, 200]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0][0])).toMatch(/attempt 1 of 4 failed \(Frame Analyst webhook 503: upstream busy\); retrying in 100ms/);
+    warn.mockRestore();
+  });
+
+  it("retries a 429 and a network error the same way", async () => {
+    const warn = quiet();
+    const { waits, sleep } = recorder();
+    let calls = 0;
+    const fetch = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new TypeError("fetch failed", { cause: new Error("connect ECONNRESET") });
+      if (calls === 2) return new Response("slow down", { status: 429 });
+      return json(result);
+    });
+    const a = await analyzeClip(clip, { ...base, sleep, fetch: fetch as unknown as Fetch, retries: 2, backoffMs: 50 });
+    expect(a.shots).toHaveLength(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([50, 100]);
+    warn.mockRestore();
+  });
+
+  it("never retries a 401 (or any other 4xx) and types it http", async () => {
+    const { waits, sleep } = recorder();
+    const fetch = vi.fn(async () => new Response("bad secret", { status: 401 }));
+    const err = await analyzeClip(clip, { ...base, sleep, fetch: fetch as unknown as Fetch, retries: 3, backoffMs: 10 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FrameAnalystError);
+    expect((err as FrameAnalystError).kind).toBe("http");
+    expect((err as FrameAnalystError).status).toBe(401);
+    expect((err as Error).message).toMatch(/401: bad secret/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(waits).toEqual([]);
+    const notFound = vi.fn(async () => new Response("no such trigger", { status: 404 }));
+    await expect(analyzeClip(clip, { ...base, sleep, fetch: notFound as unknown as Fetch, retries: 3 })).rejects.toThrow(expect.objectContaining({ kind: "http", status: 404 }));
+    expect(notFound).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after the configured attempts and says so", async () => {
+    const warn = quiet();
+    const { waits, sleep } = recorder();
+    const fetch = vi.fn(async () => new Response("still down", { status: 502 }));
+    const err = await analyzeClip(clip, { ...base, sleep, fetch: fetch as unknown as Fetch, retries: 2, backoffMs: 10 }).catch((e: unknown) => e);
+    expect((err as FrameAnalystError).kind).toBe("http");
+    expect((err as FrameAnalystError).status).toBe(502);
+    expect((err as Error).message).toMatch(/502: still down \(gave up after 3 attempts\)/);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([10, 20]);
+    warn.mockRestore();
+    // retries: 0 turns the feature off and keeps the plain message.
+    const once = vi.fn(async () => new Response("down", { status: 500 }));
+    await expect(analyzeClip(clip, { ...base, sleep, fetch: once as unknown as Fetch, retries: 0 })).rejects.toThrow(/^Frame Analyst webhook 500: down$/);
+    expect(once).toHaveBeenCalledTimes(1);
+  });
+
+  it("types an unreachable webhook and keeps the cause after the retries", async () => {
+    const warn = quiet();
+    const down = vi.fn(async () => {
+      throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:3799") });
+    });
+    const err = await analyzeClip(clip, { ...base, url: "http://127.0.0.1:3799/analyze", fetch: down as unknown as Fetch, retries: 1, backoffMs: 1 }).catch((e: unknown) => e);
+    expect((err as FrameAnalystError).kind).toBe("unreachable");
+    expect((err as Error).message).toMatch(/unreachable: connect ECONNREFUSED 127\.0\.0\.1:3799 \(gave up after 2 attempts\)/);
+    expect(down).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it("does not retry past the clip's time budget", async () => {
+    const { waits, sleep } = recorder();
+    const fetch = vi.fn(async () => new Response("busy", { status: 503 }));
+    // 1s budget, 5s first backoff: the retry would land after the deadline, so it is a timeout, not a retry.
+    const err = await analyzeClip(clip, { ...base, sleep, fetch: fetch as unknown as Fetch, retries: 3, backoffMs: 5000, timeoutMs: 1000 }).catch((e: unknown) => e);
+    expect((err as FrameAnalystError).kind).toBe("timeout");
+    expect((err as Error).message).toMatch(/within 1s: no time left to retry after 1 attempt\(s\); last failure: Frame Analyst webhook 503: busy/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(waits).toEqual([]);
+  });
+
+  it("types an aborted request as a timeout and does not retry it", async () => {
+    const { waits, sleep } = recorder();
+    const fetch = vi.fn(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+    const err = await analyzeClip(clip, { ...base, sleep, fetch: fetch as unknown as Fetch, retries: 3, backoffMs: 1 }).catch((e: unknown) => e);
+    expect((err as FrameAnalystError).kind).toBe("timeout");
+    expect((err as Error).message).toMatch(/did not finish clip1 within/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(waits).toEqual([]);
+  });
+
+  it("times out a job that keeps saying it is running", async () => {
+    const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => (init?.method === "POST" ? json({ status: "queued", status_url: "/jobs/9" }, 202) : json({ status: "running" })));
+    const err = await analyzeClip(clip, { ...base, fetch: fetch as unknown as Fetch, pollMs: 1, timeoutMs: 1 }).catch((e: unknown) => e);
+    expect((err as FrameAnalystError).kind).toBe("timeout");
+    expect((err as Error).message).toMatch(/within 0s: still polling https:\/\/nebula\.example\/jobs\/9/);
+  });
+
+  it("types a 200 whose body is not an analysis as bad_payload, after a 2xx never retrying", async () => {
+    const fetch = vi.fn(async () => json({ words: "hello world", shots: "all of it" }));
+    const err = await analyzeClip(clip, { ...base, fetch: fetch as unknown as Fetch, retries: 3 }).catch((e: unknown) => e);
+    expect((err as FrameAnalystError).kind).toBe("bad_payload");
+    expect((err as Error).message).toMatch(/no usable analysis/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const ack = vi.fn(async () => json({ success: true, message: "Webhook received" }));
+    await expect(analyzeClip(clip, { ...base, fetch: ack as unknown as Fetch })).rejects.toThrow(expect.objectContaining({ kind: "bad_payload", status: 200 }));
+  });
+
+  it("types a failing poll as http and a vanished status host as unreachable", async () => {
+    const http = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => (init?.method === "POST" ? json({ status_url: "/jobs/1" }, 202) : new Response("gone", { status: 410 })));
+    await expect(analyzeClip(clip, { ...base, fetch: http as unknown as Fetch, pollMs: 1 })).rejects.toThrow(expect.objectContaining({ kind: "http", status: 410 }));
+    const gone = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ status_url: "/jobs/1" }, 202);
+      throw new TypeError("fetch failed", { cause: new Error("getaddrinfo ENOTFOUND nebula.example") });
+    });
+    await expect(analyzeClip(clip, { ...base, fetch: gone as unknown as Fetch, pollMs: 1 })).rejects.toThrow(expect.objectContaining({ kind: "unreachable" }));
+  });
+
+  it("uses the same callback job across retries, so a late callback from an earlier attempt still lands", async () => {
+    const warn = quiet();
+    const registry = new CallbackRegistry();
+    const urls: string[] = [];
+    let calls = 0;
+    const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      urls.push(JSON.parse(String(init?.body)).callback_url);
+      return ++calls < 2 ? new Response("busy", { status: 503 }) : json({ success: true, message: "Webhook received" });
+    });
+    const pending = analyzeClip(clip, { ...base, callbacks: registry, fetch: fetch as unknown as Fetch, retries: 2, backoffMs: 1, timeoutMs: 5000 });
+    await vi.waitFor(() => expect(urls).toHaveLength(2));
+    expect(urls[0]).toBe(urls[1]);
+    const [, job, token] = urls[0].match(/\/callback\/([0-9a-f]+)\/([0-9a-f]+)$/)!;
+    expect(registry.check(job, token)).toBe("resolved");
+    expect(registry.check(job, "0".repeat(32))).toBe("forbidden");
+    expect(registry.check("nope", token)).toBe("unknown");
+    expect(registry.size).toBe(1);
+    expect(registry.resolve(job, token, { shots: [[0, 20]] })).toBe("resolved");
+    const a = await pending;
+    expect(a.via).toBe("callback");
+    expect(a.shots).toEqual([[0, 20]]);
+    warn.mockRestore();
+  });
+
+  it("types the callback wait running out as a timeout", async () => {
+    const registry = new CallbackRegistry();
+    const fetch = vi.fn(async () => json({ success: true, message: "Webhook received" }));
+    await expect(analyzeClip(clip, { ...base, callbacks: registry, fetch: fetch as unknown as Fetch, timeoutMs: 1 })).rejects.toThrow(expect.objectContaining({ kind: "timeout" }));
   });
 });
 

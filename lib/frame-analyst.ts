@@ -35,6 +35,11 @@
  *     "summary": "one line about the footage"
  *   }
  *
+ *   Failure is never silent. Every problem is a FrameAnalystError (lib/frame-analyst-error.ts) with a `kind`:
+ *   config | unreachable | http | timeout | bad_payload. The POST is retried with exponential backoff
+ *   (NEBULA_FRAME_RETRIES, NEBULA_FRAME_BACKOFF_MS) on network errors, 429 and 5xx only, inside the clip's
+ *   NEBULA_FRAME_TIMEOUT_MS budget; a 4xx such as 401 fails at once. lib/loop.ts fails the run on any of them.
+ *
  * No network code beyond the injected `fetch`, so tests run without credentials.
  */
 import { execFile } from "node:child_process";
@@ -47,16 +52,21 @@ import { z } from "zod";
 
 import {
   EXEC_MAX_BUFFER,
+  FRAME_ANALYST_BACKOFF_MS,
   FRAME_ANALYST_FRAMES,
   FRAME_ANALYST_POLL_MS,
+  FRAME_ANALYST_RETRIES,
   FRAME_ANALYST_SECRET,
   FRAME_ANALYST_TIMEOUT_MS,
   FRAME_ANALYST_URL,
   PUBLIC_URL,
   RUNS_DIR,
 } from "./config";
+import { FrameAnalystError, isFrameAnalystError, type FrameAnalystErrorKind } from "./frame-analyst-error";
 import { extractJson } from "./gemini";
 import type { Word } from "./schema";
+
+export { FrameAnalystError, isFrameAnalystError, type FrameAnalystErrorKind };
 
 const execFileAsync = promisify(execFile);
 
@@ -97,7 +107,11 @@ export interface FrameAnalystOptions {
   frames?: number;
   /** Where a callback is awaited. Default: the process-wide `callbacks` registry the route serves; null disables callbacks. */
   callbacks?: CallbackRegistry | null;
-  /** Test hook: replaces the real sleep between polls. */
+  /** Extra POST attempts after a network error, 429 or 5xx (default NEBULA_FRAME_RETRIES). 4xx never retries. */
+  retries?: number;
+  /** First retry pause in ms, doubling each attempt (default NEBULA_FRAME_BACKOFF_MS). */
+  backoffMs?: number;
+  /** Test hook: replaces the real sleep between polls and retries. */
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -130,6 +144,13 @@ export class CallbackRegistry {
     });
     this.pending.set(jobId, { clipId, token, resolve });
     return { jobId, token, promise };
+  }
+
+  /** Is a callback with this job id and token awaited? Does not consume it; the route checks before it validates the body. */
+  check(jobId: string, token: string): CallbackOutcome {
+    const p = this.pending.get(jobId);
+    if (!p) return "unknown";
+    return p.token === token ? "resolved" : "forbidden";
   }
 
   /** The route calls this with whatever was POSTed. Only the first matching callback counts. */
@@ -166,11 +187,11 @@ export function callbackUrlFor(jobId: string, token: string, publicUrl = PUBLIC_
  * GET /api/runs/<run>/files/<rel>. Throws when the file is not inside RUNS_DIR or there is no public origin.
  */
 export function clipUrlFor(file: string, runsDir = RUNS_DIR, publicUrl = PUBLIC_URL): string {
-  if (!publicUrl) throw new Error("PUBLIC_URL is not set; the Frame Analyst webhook needs a public origin to fetch the clip from");
+  if (!publicUrl) throw new FrameAnalystError("config", "PUBLIC_URL is not set; the Frame Analyst webhook needs a public origin to fetch the clip from");
   const rel = path.relative(runsDir, path.resolve(file));
   const parts = rel.split(path.sep);
   if (rel.startsWith("..") || path.isAbsolute(rel) || parts.length < 2) {
-    throw new Error(`clip ${file} is not inside RUNS_DIR (${runsDir}), so it has no public URL`);
+    throw new FrameAnalystError("config", `clip ${file} is not inside RUNS_DIR (${runsDir}), so it has no public URL`);
   }
   const [runId, ...rest] = parts;
   return `${publicUrl}/api/runs/${encodeURIComponent(runId)}/files/${rest.map(encodeURIComponent).join("/")}`;
@@ -313,7 +334,11 @@ function round3(n: number): number {
 export function parseAnalysis(body: unknown, duration: number, source: string, ms: number, how: Pick<FrameAnalysis, "via" | "frames"> = { via: "response", frames: 0 }): FrameAnalysis {
   const inner = unwrapResult(body);
   const parsed = ResultSchema.safeParse(inner);
-  if (!parsed.success) throw new Error(`Frame Analyst returned no usable analysis: ${parsed.error.issues[0]?.message ?? "unrecognised body"}`);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = issue?.path?.length ? ` at ${issue.path.join(".")}` : "";
+    throw new FrameAnalystError("bad_payload", `Frame Analyst returned no usable analysis: ${issue?.message ?? "unrecognised body"}${where}`);
+  }
   const r = parsed.data;
   const max = duration > 0 ? duration : Infinity;
   const words: Word[] = [];
@@ -327,7 +352,7 @@ export function parseAnalysis(body: unknown, duration: number, source: string, m
   const sound = clampRegions(r.sound ?? r.speech ?? r.regions, duration);
   const shots = clampRegions(r.shots ?? r.scenes, duration);
   if (words.length === 0 && sound.length === 0 && shots.length === 0 && !holdsAnalysis(inner)) {
-    throw new Error("Frame Analyst returned no usable analysis: no words, sound or shots in the body");
+    throw new FrameAnalystError("bad_payload", "Frame Analyst returned no usable analysis: no words, sound or shots in the body");
   }
   return { words, sound, shots, ...(r.summary ? { summary: r.summary } : {}), source, via: how.via, frames: how.frames, ms };
 }
@@ -360,17 +385,37 @@ async function readBody(res: Response): Promise<unknown> {
 
 const brief = (body: unknown) => (typeof body === "string" ? body.slice(0, 300) : JSON.stringify(body)?.slice(0, 300));
 
+/** 429 and 5xx (and 408) are worth another try; any other 4xx is the caller's problem and never retried. */
+export function retryableStatus(status: number): boolean {
+  return status === 429 || status === 408 || status >= 500;
+}
+
+/** AbortSignal.timeout() rejects a fetch with a DOMException named TimeoutError (AbortError on older runtimes). */
+function isTimeoutError(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
+/** A network failure is a bare "TypeError: fetch failed" from undici; the cause carries the useful part. */
+function describeCause(err: unknown): string {
+  const cause = (err as { cause?: { message?: string } } | null)?.cause?.message;
+  return cause ?? (err instanceof Error ? err.message : String(err));
+}
+
 /**
- * One clip through the webhook: sample stills, POST, then take the result from the response, from the
- * status URL it points at, or from the callback the agent posts to.
+ * One clip through the webhook: sample stills, POST (retried with exponential backoff on network errors, 429
+ * and 5xx inside the clip's time budget), then take the result from the response, from the status URL it
+ * points at, or from the callback the agent posts to. Every failure is a FrameAnalystError with a `kind`.
  */
 export async function analyzeClip(clip: ClipToAnalyze, opts: FrameAnalystOptions = {}): Promise<FrameAnalysis> {
   const url = opts.url ?? FRAME_ANALYST_URL;
-  if (!url) throw new Error("NEBULA_FRAME_WEBHOOK_URL is not set");
+  if (!url) throw new FrameAnalystError("config", "NEBULA_FRAME_WEBHOOK_URL is not set");
   const secret = opts.secret ?? FRAME_ANALYST_SECRET;
   const doFetch = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? FRAME_ANALYST_TIMEOUT_MS;
   const pollMs = opts.pollMs ?? FRAME_ANALYST_POLL_MS;
+  const retries = Math.max(0, opts.retries ?? FRAME_ANALYST_RETRIES);
+  const backoffMs = Math.max(0, opts.backoffMs ?? FRAME_ANALYST_BACKOFF_MS);
   const runsDir = opts.runsDir ?? RUNS_DIR;
   const publicUrl = opts.publicUrl ?? PUBLIC_URL;
   const registry = opts.callbacks === undefined ? callbacks : opts.callbacks;
@@ -390,22 +435,49 @@ export async function analyzeClip(clip: ClipToAnalyze, opts: FrameAnalystOptions
 
   const t0 = performance.now();
   const deadline = t0 + timeoutMs;
+  const budget = `${Math.round(timeoutMs / 1000)}s`;
   const remaining = () => Math.max(1000, Math.ceil(deadline - performance.now()));
   const signalFor = () => AbortSignal.timeout(remaining());
   const elapsed = () => Math.round(performance.now() - t0);
+  const timedOut = (what: string) => new FrameAnalystError("timeout", `Frame Analyst did not finish ${clip.clipId} within ${budget}: ${what}`);
 
-  // A network failure is a bare "TypeError: fetch failed" from undici; name the webhook so the run's warning does.
-  const unreachable = (target: string) => (err: unknown) => {
-    const cause = (err as { cause?: { message?: string } })?.cause?.message;
-    throw new Error(`Frame Analyst webhook ${target} unreachable: ${cause ?? (err instanceof Error ? err.message : String(err))}`);
+  /** Classify a rejected fetch: our own error passes through, an aborted request is a timeout, anything else is unreachable. */
+  const failedFetch = (target: string, err: unknown): FrameAnalystError => {
+    if (isFrameAnalystError(err)) return err;
+    if (isTimeoutError(err)) return timedOut(`${target} did not answer`);
+    return new FrameAnalystError("unreachable", `Frame Analyst webhook ${target} unreachable: ${describeCause(err)}`, { cause: err });
+  };
+
+  /** The POST, retried with backoff on network errors, 429 and 5xx; a 4xx or a timeout ends it at once. */
+  const post = async (payload: string): Promise<{ res: Response; body: unknown }> => {
+    for (let attempt = 0; ; attempt++) {
+      let failure: FrameAnalystError;
+      try {
+        const res = await doFetch(url, { method: "POST", headers, body: payload, signal: signalFor() });
+        const body = await readBody(res);
+        if (res.ok || res.status === 202) return { res, body };
+        failure = new FrameAnalystError("http", `Frame Analyst webhook ${res.status}: ${brief(body)}`, { status: res.status });
+      } catch (err) {
+        failure = failedFetch(url, err);
+      }
+      if (failure.kind === "timeout" || (failure.kind === "http" && !retryableStatus(failure.status ?? 0))) throw failure;
+      if (attempt >= retries) {
+        if (retries === 0) throw failure;
+        throw new FrameAnalystError(failure.kind, `${failure.message} (gave up after ${attempt + 1} attempts)`, { status: failure.status, cause: failure.cause });
+      }
+      const wait = backoffMs * 2 ** attempt;
+      if (performance.now() + wait > deadline) throw timedOut(`no time left to retry after ${attempt + 1} attempt(s); last failure: ${failure.message}`);
+      console.warn(`[frame-analyst] ${clip.clipId}: attempt ${attempt + 1} of ${retries + 1} failed (${failure.message}); retrying in ${wait}ms`);
+      await sleep(wait);
+    }
   };
 
   const pending = registry ? registry.register(clip.clipId) : null;
   try {
     const callbackUrl = pending ? callbackUrlFor(pending.jobId, pending.token, publicUrl) : undefined;
-    let res = await doFetch(url, { method: "POST", headers, body: JSON.stringify(requestBody(clip, clipUrl, { frames, callbackUrl })), signal: signalFor() }).catch(unreachable(url));
-    let body = await readBody(res);
-    if (!res.ok && res.status !== 202) throw new Error(`Frame Analyst webhook ${res.status}: ${brief(body)}`);
+    const first = await post(JSON.stringify(requestBody(clip, clipUrl, { frames, callbackUrl })));
+    let res = first.res;
+    let body = first.body;
 
     // 1. The result itself, right away.
     if (holdsAnalysis(body) && !isPending(body)) return parseAnalysis(body, clip.duration, url, elapsed(), { via: "response", ...how });
@@ -414,25 +486,32 @@ export async function analyzeClip(clip: ClipToAnalyze, opts: FrameAnalystOptions
     let pollUrl = statusUrlOf(body, url);
     if (pollUrl) {
       while (pollUrl) {
-        if (performance.now() > deadline) throw new Error(`Frame Analyst did not finish ${clip.clipId} within ${Math.round(timeoutMs / 1000)}s`);
+        if (performance.now() > deadline) throw timedOut(`still polling ${pollUrl}`);
         await sleep(pollMs);
-        res = await doFetch(pollUrl, { method: "GET", headers: pollHeaders, signal: signalFor() }).catch(unreachable(pollUrl));
+        try {
+          res = await doFetch(pollUrl, { method: "GET", headers: pollHeaders, signal: signalFor() });
+        } catch (err) {
+          throw failedFetch(pollUrl, err);
+        }
         body = await readBody(res);
         if (res.status === 202 || isPending(body)) {
           pollUrl = statusUrlOf(body, pollUrl) ?? pollUrl;
           continue;
         }
-        if (!res.ok) throw new Error(`Frame Analyst status ${res.status}: ${brief(body)}`);
+        if (!res.ok) throw new FrameAnalystError("http", `Frame Analyst status ${res.status}: ${brief(body)}`, { status: res.status });
         pollUrl = null;
       }
       return parseAnalysis(body, clip.duration, url, elapsed(), { via: "poll", ...how });
     }
 
     // 3. An acknowledgment (Nebula: { success, message }): the agent will POST to callback_url.
-    if (!pending) throw new Error(`Frame Analyst webhook answered ${res.status} without a result, a status_url to poll, or a callback to wait for: ${brief(body)}`);
+    if (!pending) {
+      throw new FrameAnalystError("bad_payload", `Frame Analyst webhook answered ${res.status} without a result, a status_url to poll, or a callback to wait for: ${brief(body)}`, { status: res.status });
+    }
+    const said = `webhook said ${res.status}: ${brief(body)}`;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Frame Analyst did not call back for ${clip.clipId} within ${Math.round(timeoutMs / 1000)}s (webhook said ${res.status}: ${brief(body)})`)), remaining());
+      timer = setTimeout(() => reject(new FrameAnalystError("timeout", `Frame Analyst did not call back for ${clip.clipId} within ${budget} (${said})`)), remaining());
     });
     try {
       body = await Promise.race([pending.promise, timeout]);

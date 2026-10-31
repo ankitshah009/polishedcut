@@ -5,6 +5,16 @@
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // A half-configured Nebula Frame Analyst (FRAME_ANALYSIS=nebula without URL, secret or an https PUBLIC_URL)
+  // fails the boot here, with the reason, instead of failing the first run that asks for an analysis.
+  // `register` must finish before the server takes requests, so throwing stops the start.
+  const { validateFrameAnalystConfig } = await import("./lib/config");
+  try {
+    validateFrameAnalystConfig();
+  } catch (err) {
+    console.error(`[frame-analyst] ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
   // Imported here so the edge bundle never pulls in ffmpeg, fs or the Gemini SDK.
   const { resumeInterruptedRuns } = await import("./lib/jobs");
   try {

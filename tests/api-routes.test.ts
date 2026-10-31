@@ -14,6 +14,8 @@ let demo: typeof import("../app/api/runs/demo/route");
 let files: typeof import("../app/api/runs/[id]/files/[...path]/route");
 let revise: typeof import("../app/api/runs/[id]/revise/route");
 let one: typeof import("../app/api/runs/[id]/route");
+let callback: typeof import("../app/api/frame-analysis/callback/[job]/[token]/route");
+let frameAnalyst: typeof import("../lib/frame-analyst");
 let config: typeof import("../lib/config");
 
 const saved = {
@@ -50,6 +52,9 @@ beforeAll(async () => {
   files = await import("../app/api/runs/[id]/files/[...path]/route");
   revise = await import("../app/api/runs/[id]/revise/route");
   one = await import("../app/api/runs/[id]/route");
+  // Same module registry as the route, so `callbacks` is the instance the handler consults.
+  callback = await import("../app/api/frame-analysis/callback/[job]/[token]/route");
+  frameAnalyst = await import("../lib/frame-analyst");
 }, 60_000);
 
 afterAll(() => {
@@ -248,6 +253,69 @@ describe("GET /api/runs/[id]/files/...", () => {
     }
     expect((await files.GET(new Request("http://local"), params({ id: "../abcdef0123", path: ["iter1.mp4"] }))).status).toBe(404);
     expect((await files.GET(new Request("http://local"), params({ id: "ffffffffff", path: ["iter1.mp4"] }))).status).toBe(404);
+  });
+});
+
+describe("/api/frame-analysis/callback/[job]/[token]", () => {
+  const post = (job: string, token: string, body: string | null, headers: Record<string, string> = {}) =>
+    callback.POST(new Request(`http://local/api/frame-analysis/callback/${job}/${token}`, { method: "POST", body, headers }), params({ job, token }));
+  const analysis = { shots: [[0, 5], [5, 10]], sound: [[0, 10]], words: [], summary: "a desk" };
+
+  it("answers 404 for an unknown job and 403 for a wrong token, whatever the body", async () => {
+    const { jobId, token } = frameAnalyst.callbacks.register("clipX");
+    try {
+      let r = await post("0000000000000000", token, JSON.stringify(analysis));
+      expect(r.status).toBe(404);
+      expect((await json(r)).error).toMatch(/no frame analysis is waiting/);
+      // Even a malformed body does not reveal whether the job exists.
+      expect((await post("0000000000000000", token, "")).status).toBe(404);
+      r = await post(jobId, "0".repeat(32), JSON.stringify(analysis));
+      expect(r.status).toBe(403);
+      expect((await json(r)).error).toMatch(/token does not match/);
+      // Refusals leave the analysis waiting.
+      expect(frameAnalyst.callbacks.check(jobId, token)).toBe("resolved");
+    } finally {
+      frameAnalyst.callbacks.forget(jobId);
+    }
+  });
+
+  it("rejects malformed bodies with 400 and a message, and keeps waiting", async () => {
+    const { jobId, token } = frameAnalyst.callbacks.register("clipY");
+    try {
+      const cases: [string | null, RegExp, Record<string, string>?][] = [
+        [null, /empty/],
+        ["   \n", /empty/],
+        ["{not json", /not a JSON object/],
+        ["Thanks, I will look at it later.", /not a JSON object/],
+        ["[1, 2, 3]", /not a JSON object/],
+        ['"just a string"', /not a JSON object/],
+        [JSON.stringify({ success: true, message: "Webhook received" }), /holds no analysis: expected words, sound and\/or shots/],
+        [JSON.stringify({ status: "running", status_url: "/jobs/1" }), /holds no analysis/],
+        [JSON.stringify(analysis), /too large/, { "content-length": String(callback.CALLBACK_MAX_BYTES + 1) }],
+      ];
+      for (const [body, message, headers] of cases) {
+        const r = await post(jobId, token, body, headers);
+        expect(r.status, String(body)).toBe(400);
+        expect((await json(r)).error, String(body)).toMatch(message);
+      }
+      expect(frameAnalyst.callbacks.check(jobId, token)).toBe("resolved");
+      expect(frameAnalyst.callbacks.size).toBeGreaterThanOrEqual(1);
+    } finally {
+      frameAnalyst.callbacks.forget(jobId);
+    }
+  });
+
+  it("accepts an analysis, wrapped or inside prose, with { ok: true }, exactly once", async () => {
+    const { jobId, token, promise } = frameAnalyst.callbacks.register("clipZ");
+    const r = await post(jobId, token, "Here it is:\n```json\n" + JSON.stringify({ result: analysis }) + "\n```");
+    expect(r.status).toBe(200);
+    expect(await json(r)).toEqual({ ok: true });
+    const body = await promise;
+    expect(frameAnalyst.holdsAnalysis(body)).toBe(true);
+    expect(frameAnalyst.parseAnalysis(body, 10, "test", 1, { via: "callback", frames: 0 }).shots).toEqual([[0, 5], [5, 10]]);
+    // The job is consumed; a second delivery is 404.
+    expect((await post(jobId, token, JSON.stringify(analysis))).status).toBe(404);
+    expect((await callback.GET()).status).toBe(405);
   });
 });
 
