@@ -18,7 +18,7 @@ PORT="${PORT:-3100}"
 PROXY_DIR=/tmp/pc-proxy
 
 status() {
-  local pid; pid=$(lsof -nP -iTCP:$PORT -sTCP:LISTEN -t 2>/dev/null | head -1)
+  local pid; pid=$(lsof -nP -iTCP:$PORT -sTCP:LISTEN -t 2>/dev/null | sort -u | head -1 | tr -d "[:space:]")
   echo "server:  ${pid:+pid $pid}${pid:-not running} (port $PORT)"
   echo "tunnel:  $(grep -o 'https://[a-z0-9.-]*serveousercontent\.com\|https://[a-z0-9-]*\.serveo\.net' /tmp/serveo.log 2>/dev/null | tail -1 || echo none)"
   echo "proxy:   $(grep -o 'https://[^/"]*' $PROXY_DIR/vercel.json 2>/dev/null | head -1 || echo not deployed)"
