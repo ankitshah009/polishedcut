@@ -12,4 +12,13 @@ export async function register(): Promise<void> {
   } catch (err) {
     console.error("[argon] could not resume interrupted runs:", err);
   }
+  // Chat front door (Photon Spectrum). Only when SPECTRUM_PROJECT_ID/SECRET are set; see docs/SPECTRUM.md.
+  const { spectrumEnabled, startSpectrumStream } = await import("./lib/spectrum");
+  if (spectrumEnabled()) {
+    try {
+      await startSpectrumStream();
+    } catch (err) {
+      console.error("[spectrum] could not start:", err);
+    }
+  }
 }

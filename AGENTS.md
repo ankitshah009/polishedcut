@@ -52,6 +52,18 @@ Read this before touching the repo. Each note below cost someone time today.
   `applyMusicPatch` before the cut/caption patches; `lib/patch.ts` also handles it so any other
   `applyPatches` caller gets the same result.
 
+## Chat adapter (Photon Spectrum)
+
+- Run creation lives in `lib/intake.ts` (`createRun`). `POST /api/runs` and the chat adapter both call
+  it; change intake rules there, not in the route.
+- `lib/spectrum-handler.ts` has no runtime dependency on the SDK (types only). Keep it that way so
+  `tests/spectrum.test.ts` runs without credentials or gRPC. The SDK is loaded lazily in
+  `lib/spectrum.ts`, and the packages are in `serverExternalPackages` (`next.config.ts`).
+- The adapter boots from `instrumentation.ts` only when `SPECTRUM_PROJECT_ID`/`_SECRET` are set.
+  In stream mode it holds a connection open from the dev server; restarting `next dev` drops the
+  per-chat state (pending clips/brief), though runs themselves resume as usual.
+- Chat replies are plain text (iMessage/WhatsApp render no markdown). Strings live in `REPLIES`.
+
 ## Lovable / dashboard port notes
 
 - The dashboard (`components/shell/*`) was ported from a Lovable prototype. Lovable previews run on

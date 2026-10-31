@@ -11,6 +11,13 @@ change, streamed live, and you decide what to export.
 Built for the Gemini 4 Argon SF Hackathon (Problem Statement Two: More Dimensions). Everything in
 this repo was written on the day; see the last section.
 
+## Text it a clip
+
+Framecut also answers on iMessage, WhatsApp, Telegram and Slack through [Photon Spectrum](https://photon.codes):
+text the agent's number a clip and a one-line brief, and the finished cut comes back in the same chat.
+Reply with a note ("tighter, lose the second shot") and it revises. Same pipeline, same run on the
+dashboard; see [docs/SPECTRUM.md](docs/SPECTRUM.md) for the ten-minute setup.
+
 ## Who this is for
 
 Ankit, the builder, shot the hackathon day on his phone and wants a recap cut by the time demos

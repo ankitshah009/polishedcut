@@ -151,6 +151,11 @@ export const RunSchema = z.object({
   status: RunStatusSchema.default("queued"),
   error: z.string().default(""),
   warnings: z.array(z.string()).default([]),
+  // Where the footage arrived from: "web" (dashboard upload), "demo", or a chat platform via Photon
+  // Spectrum ("imessage", "whatsapp-business", "telegram", "slack"). Older run.json files have neither.
+  source: z.string().optional(),
+  // The requester as the platform identifies them (phone number, chat id); set by the chat adapter.
+  requester: z.string().optional(),
   timings: z.array(z.object({ stage: z.string(), ms: z.number() })).default([]).optional(), // wall-clock per stage
   // One entry per model call / file upload, for cost estimates (see lib/pricing.ts).
   usage: z
